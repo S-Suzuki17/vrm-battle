@@ -1,73 +1,74 @@
-# 3D自作キャラバトル（アンリミテッドクルーズ風タイマンバトル仕様）開発計画
+# 3D自作キャラバトル & Unity 6サバイバルシステム 開発計画
 
 ## 概要
-Wii「ワンピース アンリミテッドクルーズ」のタイマンバトル（VS/サバイバルモード）のゲーム性とフィールド環境を完全オマージュ。自作VRMアバターを使って、古代遺跡の断崖闘技場を舞台に、HP/MP(SP)リソース、リアルタイムコンボ攻撃、必殺技カットイン、ガード、回避、ロックオンを駆使した本格3Dアクションバトルを実現する。
+1. Web版: Three.js & three-vrm によるアンリミ風3Dタイマンバトルゲーム（稼働中）
+2. Unity 6版: 「ユーザー自作キャラのインポート ＆ CPU連勝サバイバルシステム」のC#スクリプト構築
 
-## 状態遷移・システムアーキテクチャ（Mermaid図）
+## Unity 6 サバイバルシステム アーキテクチャ（Mermaid図）
 
 ```mermaid
 flowchart TD
-    subgraph Input ["入力システム (PC/スマホ両対応)"]
-        Key["キーボード (WASD/J/K/L/Space)"]
-        Pad["バーチャルパッド & アクションボタン"]
-        Lock["ロックオン切替"]
-    end
-
-    subgraph PlayerControl ["プレイヤーアクションステート"]
-        Idle["待機 / アイドル"]
-        Move["360度移動 / 旋回"]
-        Combo["通常攻撃コンボ (1段->2段->3段フィニッシュ)"]
-        Special["SP必殺技 (暗転・カメラズーム・大技)"]
-        Guard["ガード (被ダメージ80%カット + ガードスパーク)"]
-        Dodge["ステップ回避 (無敵時間 + SP消費)"]
-        Damaged["被弾 / ノックバック / ダウン"]
+    subgraph ImportSys ["① キャラクターインポート (UserCharacterLoader)"]
+        FileSelect["外部画像 (PNG/JPG) / キャラメイク"]
+        AsyncLoad["Texture2D 生成 (ImageConversion)"]
+        Apply["Renderer (Mesh) / SpriteRenderer / UI Image へ適用"]
+        DataHolder["シーン跨ぎ保持 (DontDestroyOnLoad / ScriptableObject)"]
         
-        Idle --> Move
-        Idle --> Combo
-        Idle --> Special
-        Idle --> Guard
-        Idle --> Dodge
-        Move --> Combo
-        Move --> Dodge
-        Damaged --> Idle
+        FileSelect --> AsyncLoad --> Apply
+        AsyncLoad --> DataHolder
     end
 
-    subgraph BattleField ["アンリミテッドクルーズ風フィールド"]
-        Stage["古代遺跡の石造り円形コロシアム"]
-        Columns["破損した古代石柱 & レリーフ"]
-        Torches["松明 (揺らめく炎パーティクル + 点光源)"]
-        SeaSky["広大な大海原 & 雲と太陽光・大気フォグ"]
+    subgraph SurvivalSys ["② CPU連勝サバイバル管理者 (SurvivalGameManager)"]
+        WinStreak["連勝カウンター (CurrentWinStreak)"]
+        TMP_UI["TextMeshPro UI 表示 ('〇連勝中！')"]
+        HealthCarry["プレイヤー体力引き継ぎ (全回復 / ボーナス割合回復 / そのまま)"]
+        ScaleDiff["CPU段階的強化 (HP・攻撃力・体幹・AI頻度 × 倍率)"]
+        GameOver["敗北時処理 (PlayerPrefs 最高記録保存 & リザルト表示)"]
+        
+        WinStreak --> TMP_UI
+        WinStreak --> ScaleDiff
     end
 
-    subgraph BattleEngine ["リソース & バトルロジック"]
-        HP_MP["HP(1000) & MP/SP(100) ゲージ管理"]
-        HitStop["ヒットストップ & 画面振動 & ダメージ数値ポップ"]
-        ComboCount["コンボHIT数表示"]
-        CPU_AI["敵AI (間合い管理 / 攻撃 / ガード / 必殺技)"]
+    subgraph BattleEvents ["既存戦闘システムとの連携"]
+        PlayerWin["ボス撃破 (OnPlayerWin)"]
+        PlayerLose["プレイヤー死亡 (OnPlayerLose)"]
+        NextRound["次ラウンド生成 (OnRoundStart)"]
     end
 
-    Input --> PlayerControl
-    PlayerControl --> BattleEngine
-    CPU_AI --> BattleEngine
-    BattleEngine --> BattleField
+    PlayerWin --> WinStreak
+    PlayerWin --> HealthCarry
+    PlayerWin --> NextRound
+    PlayerLose --> GameOver
+    ScaleDiff --> NextRound
 ```
 
 ## タスク進捗
 
-- [x] 1. **アンリミ風フィールドの構築**:
-  - 古代遺跡の石畳アリーナ、壊れた石柱群、揺らめくトーチの炎（パーティクル＋ライト）、大海原と空・大気フォグ
-- [x] 2. **リアルタイムプレイヤーアクション & コントローラ実装**:
-  - 移動（WASD & バーチャルスティック）、ロックオンTPSカメラ、旋回
-  - 3段通常攻撃コンボ、ヒット判定、攻撃エフェクト
-  - ガード（Space）、ステップ回避（L）、SP必殺技（K: 暗転＆技名カットイン＆大爆発）
-- [x] 3. **HP/MP(SP)リソース & アンリミ風HUD**:
-  - HPバー（ダメージ蓄積追随バー付き）、SP/MPバー（攻撃ヒット・時間でチャージ）
-  - コンボHIT数＆合計ダメージ表示、ダメージポップアップ
-  - スマホ用オンスクリーンコントローラー（移動パッド、攻撃/必殺/ガード/回避ボタン）
-- [x] 4. **敵CPUの本格アクションAI**:
-  - プレイヤーとの距離・間合いに応じた接近・後退・通常攻撃・ガード・必殺技
-  - 4スタイル（拳法家・重戦士・サイキッカー・スナイパー）の戦闘行動差別化
-- [x] 5. **VRMアバターとの完全統合**:
-  - ドロップされた自作VRMアバターのボーン制御（移動・攻撃モーション・ダウン・勝利ポーズ）
-- [x] 6. **テスト・動作検証・GitHubへのプッシュ**:
-  - ローカルサーバーでの動作確認、GitHubコミット＆プッシュ
+### Web版 (完了)
+- [x] 1. 古代遺跡コロシアム & 大海原ステージ
+- [x] 2. プレイヤー操作 (コンボ, 必殺技, ガード, 回避, ロックオン)
+- [x] 3. HP/SPゲージ & アンリミ風HUD
+- [x] 4. CPU AI & 4スタイル
+- [x] 5. VRMローカルD&D読み込み
+- [x] 6. ローカルサーバー & GitHub Pages公開
+
+### Unity 6 C#システム (完了)
+- [x] 7. **`UserCharacterLoader.cs` の実装**:
+  - 外部画像（PNG/JPG/バイト配列）の非同期ロード
+  - URP (`_BaseMap`) & Built-in (`_MainTex`) 両対応のテクスチャ動的適用
+  - 2Dスプライト・UI画像への適用
+  - `DontDestroyOnLoad` によるシーン間データ永続化（名前、カラー、テクスチャ）
+- [x] 8. **`SurvivalGameManager.cs` の実装**:
+  - `CurrentWinStreak` カウント & TextMeshPro UI 更新
+  - プレイヤー体力引き継ぎオプション（全回復 / 割合ボーナス回復 / そのまま）
+  - CPUステータスの段階的強化倍率計算（最大HP、攻撃力、体幹ゲージ、AI行動インターバル）
+  - ゲームオーバー時の `PlayerPrefs` ハイスコア保存 & リザルト表示
+  - `OnPlayerWin()` / `OnPlayerLose()` イベントAPI
+- [x] 9. **補助クラス・データモデル**:
+  - `UserCharacterData.cs` (シリアライズ可能なキャラデータ)
+  - `UserCharacterDataSO.cs` (ScriptableObjectラッパー)
+  - `CpuBattleStats.cs` (CPUステータス定義)
+  - `IBattleEntity.cs` (汎用ヘルス・ステータス連携インターフェース)
+  - `SampleBattleEntity.cs` (即座に動作するサンプルコンポーネント)
+- [x] 10. **GitHubへのコミット & プッシュ**:
+  - Unityスクリプトをリポジトリへ反映、ドキュメント更新
