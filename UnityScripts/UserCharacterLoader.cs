@@ -17,11 +17,17 @@ namespace UnlimitedSurvival
     {
         public static UserCharacterLoader Instance { get; private set; }
 
-        [Header("=== Active Character Data (シーン跨ぎ保持) ===")]
+        [Header("=== Active Character Data (シーン跨ぎ保持・1人1体制限) ===")]
         [SerializeField] private UserCharacterData currentCharacterData = new UserCharacterData();
 
+        [Tooltip("1人1体までのオリキャラ導入制限を有効にするか")]
+        [SerializeField] private bool enforceSingleCharacterLimit = true;
+
+        [Tooltip("現在1人1体の登録枠がロックされているか")]
+        [SerializeField] private bool isCharacterSlotLocked = false;
+
         [Header("=== Auto Apply Settings ===")]
-        [Tooltip("シーン遷移時に自動的にプレイヤーオブジェクトを探してテクスチャを適用するか")]
+        [Tooltip("シーン遷移時に自動的にプレイヤーオブジェクトを探してテクスチャとパラメータを適用するか")]
         [SerializeField] private bool autoApplyOnSceneLoad = true;
 
         [Tooltip("自動適用時に探すプレイヤーのGameObjectタグ")]
@@ -43,6 +49,7 @@ namespace UnlimitedSurvival
         public event Action<GameObject> OnCharacterAppliedToPlayer;
 
         public UserCharacterData CurrentData => currentCharacterData;
+        public bool IsCharacterSlotLocked => isCharacterSlotLocked;
 
         private void Awake()
         {
@@ -81,8 +88,32 @@ namespace UnlimitedSurvival
             }
         }
 
+        /// <summary>
+        /// 1人1体制限のチェック。既に1体導入済みの場合は2体目の導入をブロックします。
+        /// </summary>
+        public bool CanImportCharacter()
+        {
+            if (enforceSingleCharacterLimit && isCharacterSlotLocked)
+            {
+                Debug.LogWarning($"[UserCharacterLoader] 1人1体制限により新規導入がブロックされました（登録済み: {currentCharacterData.characterName}）。");
+                return false;
+            }
+            return true;
+        }
+
+        /// <summary>
+        /// 登録枠ロックを解除して初期状態に戻します（連勝記録リセット時などに呼び出し）。
+        /// </summary>
+        public void UnlockAndResetCharacterSlot()
+        {
+            isCharacterSlotLocked = false;
+            currentCharacterData.Dispose();
+            currentCharacterData = new UserCharacterData();
+            Debug.Log("[UserCharacterLoader] 1人1体の登録枠ロックを解除しました。");
+        }
+
         // ========================================================
-        // 1. 外部ファイルからの非同期 / 同期インポート
+        // 1. 外部ファイルからの非同期 / 同期インポート (1人1体制限付き)
         // ========================================================
 
         /// <summary>
@@ -90,6 +121,8 @@ namespace UnlimitedSurvival
         /// </summary>
         public async Task<bool> LoadCharacterFromPathAsync(string filePath, string characterName = "Custom Hero", Color? themeColor = null)
         {
+            if (!CanImportCharacter()) return false;
+
             if (string.IsNullOrEmpty(filePath) || !File.Exists(filePath))
             {
                 Debug.LogError($"[UserCharacterLoader] File not found: {filePath}");
@@ -113,6 +146,8 @@ namespace UnlimitedSurvival
         /// </summary>
         public bool LoadCharacterFromBytes(byte[] imageData, string characterName = "Custom Hero", Color? themeColor = null)
         {
+            if (!CanImportCharacter()) return false;
+
             if (imageData == null || imageData.Length == 0)
             {
                 Debug.LogError("[UserCharacterLoader] Image data is null or empty.");
@@ -127,6 +162,8 @@ namespace UnlimitedSurvival
         /// </summary>
         public void SetCharacterFromTexture(Texture2D texture, string characterName = "Custom Hero", Color? themeColor = null)
         {
+            if (!CanImportCharacter()) return;
+
             if (texture == null)
             {
                 Debug.LogError("[UserCharacterLoader] Provided texture is null.");
@@ -144,8 +181,9 @@ namespace UnlimitedSurvival
             );
 
             currentCharacterData = new UserCharacterData(characterName, themeColor ?? Color.cyan, texture, sprite, "Direct Texture");
+            isCharacterSlotLocked = true;
             OnCharacterLoaded?.Invoke(currentCharacterData);
-            Debug.Log($"[UserCharacterLoader] Successfully set character from texture: {characterName}");
+            Debug.Log($"[UserCharacterLoader] Successfully set & locked 1/1 character from texture: {characterName}");
         }
 
         private bool CreateAndStoreCharacterData(byte[] fileData, string characterName, Color color, string sourcePath)
@@ -179,22 +217,33 @@ namespace UnlimitedSurvival
             currentCharacterData.Dispose();
 
             currentCharacterData = new UserCharacterData(characterName, color, texture, sprite, sourcePath);
+            isCharacterSlotLocked = true;
             OnCharacterLoaded?.Invoke(currentCharacterData);
-            Debug.Log($"[UserCharacterLoader] Successfully loaded character '{characterName}' ({texture.width}x{texture.height})");
+            Debug.Log($"[UserCharacterLoader] Successfully loaded & locked 1/1 character '{characterName}' ({texture.width}x{texture.height})");
 
             return true;
         }
 
         // ========================================================
-        // 2. プレイヤーモデル / メッシュ / スプライトへの動的適用
+        // 2. プレイヤーモデル / メッシュ / スプライト / 戦闘パラメータへの動的適用
         // ========================================================
 
         /// <summary>
-        /// 指定したGameObject（プレイヤー）配下のRenderer/SpriteRenderer/UI Imageを走査し、テクスチャを自動上書きします。
+        /// 指定したGameObject（プレイヤー）配下のRenderer/SpriteRenderer/UI Imageおよび
+        /// UnityPlayerActionController の戦闘パラメータ（攻撃力・技範囲・ひるみ力・速度）を自動反映します。
         /// </summary>
         public void ApplyToPlayerObject(GameObject playerRoot)
         {
             if (playerRoot == null || !currentCharacterData.IsValid) return;
+
+            currentCharacterData.ClampParametersToAllowedRange();
+
+            // プレイヤーアクションコントローラーへ範囲制限済みパラメータを反映
+            UnityPlayerActionController actionCtrl = playerRoot.GetComponent<UnityPlayerActionController>();
+            if (actionCtrl != null)
+            {
+                actionCtrl.ApplyCustomCharacterStats(currentCharacterData);
+            }
 
             int appliedCount = 0;
 

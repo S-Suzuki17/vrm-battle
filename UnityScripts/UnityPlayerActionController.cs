@@ -21,8 +21,27 @@ namespace UnlimitedSurvival
         [SerializeField] private float currentSp = 50f;
         [SerializeField] private float spRegenPerSec = 5.5f;
 
-        [Header("=== Movement & Combat Parameters ===")]
-        [SerializeField] private float moveSpeed = 6.8f;
+        [Header("=== Custom Character Bounded Combat Parameters (範囲制限パラメータ) ===")]
+        [Tooltip("攻撃力倍率 [0.85x 〜 1.40x]")]
+        [Range(0.85f, 1.40f)]
+        [SerializeField] private float attackMultiplier = 1.05f;
+
+        [Tooltip("通常技範囲・リーチ(m) [2.4m 〜 4.5m]")]
+        [Range(2.4f, 4.5f)]
+        [SerializeField] private float attackRange = 3.4f;
+
+        [Tooltip("敵をひるませる力・崩し倍率 [0.80x 〜 1.50x]")]
+        [Range(0.80f, 1.50f)]
+        [SerializeField] private float stunPower = 1.12f;
+
+        [Tooltip("攻撃速度・連撃倍率 [0.85x 〜 1.35x]")]
+        [Range(0.85f, 1.35f)]
+        [SerializeField] private float attackSpeed = 1.08f;
+
+        [Tooltip("フィールド移動速度 [5.2 〜 8.0]")]
+        [Range(5.2f, 8.0f)]
+        [SerializeField] private float moveSpeed = 6.3f;
+
         [SerializeField] private float dodgeSpeed = 15.0f;
         [SerializeField] private float arenaRadiusLimit = 9.8f;
         [SerializeField] private Transform targetCpu;
@@ -181,7 +200,8 @@ namespace UnlimitedSurvival
         {
             _comboStep = (_comboStep % 3) + 1;
             _actionState = "attack";
-            _stateDuration = _comboStep == 3 ? 0.56f : (_comboStep == 2 ? 0.44f : 0.36f);
+            float baseDur = _comboStep == 3 ? 0.56f : (_comboStep == 2 ? 0.44f : 0.36f);
+            _stateDuration = baseDur / Mathf.Max(0.85f, attackSpeed);
             _stateTimer = _stateDuration;
 
             if (targetCpu != null)
@@ -196,13 +216,14 @@ namespace UnlimitedSurvival
                 }
             }
 
-            // クレセント斬撃エフェクト生成
+            // クレセント斬撃エフェクト生成（技範囲 attackRange に応じてサイズ拡大）
             Color slashCol = _comboStep == 3 ? new Color(1f, 0.78f, 0f) : (_comboStep == 2 ? new Color(0f, 1f, 0.8f) : new Color(0f, 0.9f, 1f));
             float tiltZ = _comboStep == 1 ? -28f : (_comboStep == 2 ? 8f : 85f);
-            SpawnCrescentSlashVFX(transform.position + Vector3.up * 1.15f + transform.forward * 1.1f, transform.rotation * Quaternion.Euler(0f, 0f, tiltZ), slashCol, _comboStep == 3 ? 1.8f : 1.25f);
+            float rangeScale = (attackRange / 3.1f) * (_comboStep == 3 ? 1.8f : 1.25f);
+            SpawnCrescentSlashVFX(transform.position + Vector3.up * 1.15f + transform.forward * 1.1f, transform.rotation * Quaternion.Euler(0f, 0f, tiltZ), slashCol, rangeScale);
 
             // インパクトタイミングまで少し待機
-            yield return new WaitForSeconds(_comboStep == 3 ? 0.22f : 0.1f);
+            yield return new WaitForSeconds((_comboStep == 3 ? 0.22f : 0.1f) / Mathf.Max(0.85f, attackSpeed));
 
             if (_comboStep == 3)
             {
@@ -213,17 +234,18 @@ namespace UnlimitedSurvival
             if (targetCpu != null)
             {
                 float dist = Vector3.Distance(transform.position, targetCpu.position);
-                if (dist <= 3.1f)
+                if (dist <= attackRange)
                 {
-                    float dmg = _comboStep == 1 ? 50f : (_comboStep == 2 ? 75f : 140f);
+                    float rawDmg = _comboStep == 1 ? 50f : (_comboStep == 2 ? 75f : 140f);
+                    float dmg = rawDmg * attackMultiplier;
                     IBattleEntity cpuEntity = targetCpu.GetComponent<IBattleEntity>();
                     cpuEntity?.TakeDamage(dmg);
                     currentSp = Mathf.Min(maxSp, currentSp + 12f);
 
-                    // ヒットスパーク＆ヒットストップ
+                    // ヒットスパーク＆ヒットストップ（stunPower 連動）
                     SpawnHitSparkBurstVFX(targetCpu.position + Vector3.up * 1.1f, slashCol, _comboStep == 3 ? 40 : 24);
-                    _cameraShake = _comboStep == 3 ? 0.45f : 0.2f;
-                    StartCoroutine(TriggerHitStopRoutine(_comboStep == 3 ? 0.075f : 0.035f));
+                    _cameraShake = (_comboStep == 3 ? 0.45f : 0.2f) * stunPower;
+                    StartCoroutine(TriggerHitStopRoutine((_comboStep == 3 ? 0.075f : 0.035f) * stunPower));
                 }
             }
         }
@@ -541,6 +563,21 @@ namespace UnlimitedSurvival
 
         public void ApplyStats(CpuBattleStats stats)
         {
+        }
+
+        /// <summary>
+        /// ユーザーがオリキャラ工房で設定した「決められた範囲内」の戦闘パラメータを反映します。
+        /// </summary>
+        public void ApplyCustomCharacterStats(UserCharacterData data)
+        {
+            if (data == null) return;
+            data.ClampParametersToAllowedRange();
+            attackMultiplier = data.attackMultiplier;
+            attackRange = data.attackRange;
+            stunPower = data.stunPower;
+            attackSpeed = data.attackSpeed;
+            moveSpeed = data.moveSpeed;
+            Debug.Log($"[UnityPlayerActionController] オリキャラ性能反映: ATK={attackMultiplier:F2}x, 範囲={attackRange:F1}m, ひるみ={stunPower:F2}x, 攻速={attackSpeed:F2}x, SPD={moveSpeed:F1}");
         }
 
         public void SetTargetCpu(Transform cpuTransform)

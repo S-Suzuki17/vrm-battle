@@ -1,62 +1,98 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
-import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
-import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { VRMLoaderPlugin, VRMUtils } from '@pixiv/three-vrm';
 
 // ========================================================
-// 1. ゲーム設定 & マスターデータ
+// 1. CPUボス 5大バリエーション定義 (画像1・2のモンスター＆ボス完全再現)
 // ========================================================
-const CPU_STYLES = [
-    { type: "近接型（武器ナシ）", suffix: "拳法家", detail: "高速コンボラッシュ & 旋風脚", category: "melee-bare" },
-    { type: "近接型（武器アリ）", suffix: "重戦士", detail: "大剣回転斬り & 鉄壁ガード", category: "melee-weapon" },
-    { type: "狙撃型（武器ナシ）", suffix: "サイキッカー", detail: "念動レーザー弾 & 重力衝撃波", category: "snipe-bare" },
-    { type: "狙撃型（武器アリ）", suffix: "スナイパー", detail: "超高速プラズマ狙撃 & バックステップ", category: "snipe-weapon" }
+const CPU_BOSS_TYPES = [
+    {
+        id: "oni_berserker",
+        name: "赤鬼オーガ・ゴウラ",
+        style: "重撃ハンマー型（武器アリ）",
+        category: "melee-weapon",
+        skinColor: 0xb33939,
+        armorColor: 0x7d1111,
+        accentColor: 0xffdd59,
+        scale: 1.28,
+        poiseMax: 110
+    },
+    {
+        id: "spiked_behemoth",
+        name: "棘獣ベヒーモス・ガルム",
+        style: "剛腕ラッシュ型（棘装甲）",
+        category: "melee-bare",
+        skinColor: 0x8c6239,
+        armorColor: 0x4a3525,
+        accentColor: 0xff9f1a,
+        scale: 1.35,
+        poiseMax: 125
+    },
+    {
+        id: "stone_golem",
+        name: "古代機兵ゴーレム",
+        style: "超重装甲型（岩石砲）",
+        category: "snipe-bare",
+        skinColor: 0x957d65,
+        armorColor: 0x5c4d3c,
+        accentColor: 0x00f2fe,
+        scale: 1.38,
+        poiseMax: 140
+    },
+    {
+        id: "paladin_knight",
+        name: "聖堂重装騎士・ガウェイン",
+        style: "鉄壁ガード＆大剣型",
+        category: "melee-weapon",
+        skinColor: 0xdcdde1,
+        armorColor: 0x718093,
+        accentColor: 0xfbc531,
+        scale: 1.22,
+        poiseMax: 115
+    },
+    {
+        id: "lizard_dragonkin",
+        name: "竜鱗リザード・ドラコ",
+        style: "高速爪牙＆火球型",
+        category: "snipe-weapon",
+        skinColor: 0x4cd137,
+        armorColor: 0x218c74,
+        accentColor: 0xff5e57,
+        scale: 1.18,
+        poiseMax: 95
+    }
 ];
 
-const ENEMY_NAMES = ["ドロイド", "シャドウ", "ギガント", "ハンター", "ヴァルキリー", "プロトタイプ", "ベルセルク", "ファントム"];
-
-// ゲーム状態
+// ========================================================
+// 2. ゲーム全体ステート ＆ プレイヤー設定（1人1体制限・範囲内パラメータ）
+// ========================================================
 let currentWins = 0;
-let highScore = parseInt(localStorage.getItem("battle_high_score") || "0", 10);
-let currentCpuInfo = {};
+let highScore = Number(localStorage.getItem("battle_high_score") || 0);
+let roundTimer = 99;
+let roundTimerAccum = 0;
 let isGameActive = true;
-let isKoSlowMo = false;
-let slowMoTimer = 0;
-let hitStopTimer = 0;
-let cameraShakeIntensity = 0;
-let cinematicCameraMode = null; // 必殺技中のシネマティックカメラ演出
-
-// コンボ管理
 let comboHits = 0;
 let comboDamage = 0;
-let comboTimer = null;
+let comboResetTimer = null;
 
-// 3D環境 & ポストプロセス
-let scene, camera, renderer, composer;
-let clock = new THREE.Clock();
-
-// Blender 5.2 生成アセットのキャッシュ
-const blenderCache = {
-    fighterScene: null,
-    greatswordScene: null,
-    sniperRifleScene: null,
-    psyOrbScene: null,
-    loaded: false
-};
-
-// ステージ要素 & VFX管理リスト
+// Three.js シーン管理
+let scene, camera, renderer, clock;
+let toonGradientMap = null;
 let arenaRadius = 10.2;
-let torchFlames = [];
-let seaWaterMesh = null;
 let effectsList = [];
+let projectilesList = [];
+let playerAuraParticles = [];
 let dustTimer = 0;
+let cameraShakeIntensity = 0;
+let hitStopTimer = 0;
+let isKoSlowMo = false;
+let slowMoTimer = 0;
+let cinematicCameraMode = null;
 
-// プレイヤー管理オブジェクト
+// プレイヤー管理オブジェクト（キャラデザ・動き・VFX・パラメータ配分統合）
 const player = {
     group: null,
-    animPivot: null, // ジャンプ・前傾・360度スピン・宙返り用の内部ピボット
+    animPivot: null,
     mesh: null,
     joints: {},
     customJoints: null,
@@ -64,18 +100,47 @@ const player = {
     customGlb: null,
     isVrm: false,
     isCustomRig: false,
-    charType: "knight", // "knight", "seraph", "kuro", "leo"
-    skillName: "🔥 覇皇烈空閃 (EX SPECIAL) 🔥",
-    themeColor: 0x00ffff,
+
+    // 【1人1体制限ロック】
+    isCustomCharLocked: false,
+    registeredCharName: "PLAYER (自作)",
+
+    // ① キャラデザイン設定
+    design: {
+        name: "PLAYER (自作)",
+        style: "goggle_hero",      // goggle_hero, ponytail_valkyrie, astral_mage, cyber_brawler, straw_adventurer
+        weapon: "rune_greatsword", // rune_greatsword, sword_shield, magic_staff, knuckle_gauntlet, crimson_katana
+        hairColor: "#1e90ff",
+        outfitColor: "#253b56",
+        auraColor: "#00f2fe"
+    },
+
+    // ② 動き（モーション型） ＆ ③ 技エフェクト属性
+    motionType: "heavy_buster",    // heavy_buster, speed_rush, acrobat_martial, magic_shooter
+    vfxElement: "plasma_cyan",     // plasma_cyan, flame_crimson, holy_astral, void_gravity
+    skillName: "⚡ 蒼雷・神速烈空閃 ⚡",
+    themeColor: 0x00f2fe,
+
+    // ④ 決められた範囲内で配分された各種パラメータ（合計100PT上限）
+    atkScale: 1.05,       // 攻撃力倍率 [0.85x 〜 1.40x]
+    attackRange: 3.4,     // 通常技範囲 [2.4m 〜 4.5m]
+    specialRange: 11.5,   // 必殺技範囲 [m]
+    stunPower: 1.12,      // ひるませ力・崩し [0.80x 〜 1.50x]
+    atkSpeed: 1.08,       // 攻撃速度倍率 [0.85x 〜 1.35x]
+    speed: 6.3,           // 移動速度 [5.2 〜 8.0]
+
+    // バトルリアルタイム状態
     hp: 1000,
     maxHp: 1000,
     sp: 60,
     maxSp: 100,
-    position: new THREE.Vector3(-4.2, 0, 0),
-    rotationY: Math.PI / 2,
+    position: new THREE.Vector3(-3.8, 0, 0.8),
+    airY: 0,
+    airVelY: 0,
+    rotationY: Math.PI * 0.45,
     velocity: new THREE.Vector3(),
-    speed: 7.2,
-    state: "idle", // idle, move, attack, special, guard, dodge, damaged, down
+    state: "idle", // idle, move, attack, skill, special, guard, dodge, jump, damaged, down
+    attackSubType: "rush",
     stateTimer: 0,
     stateDuration: 0.35,
     comboStep: 0,
@@ -85,24 +150,28 @@ const player = {
     animTime: 0
 };
 
-// CPU管理オブジェクト
+// CPU管理オブジェクト（ひるみ・体幹ゲージ・打ち上げ対応）
 const cpu = {
     group: null,
     animPivot: null,
     mesh: null,
     joints: {},
-    weaponMesh: null,
-    orbs: [],
+    bossInfo: CPU_BOSS_TYPES[0],
     themeColor: 0xff4757,
     hp: 1000,
     maxHp: 1000,
     sp: 20,
     maxSp: 100,
-    position: new THREE.Vector3(4.2, 0, 0),
-    rotationY: -Math.PI / 2,
+    poise: 110,           // 体幹値（0になると大ひるみブレイク）
+    maxPoise: 110,
+    stunTimer: 0,         // ひるみ（Hit-Stun）残り時間
+    position: new THREE.Vector3(3.8, 0, -0.8),
+    airY: 0,              // 打ち上げ高度
+    airVelY: 0,
+    rotationY: -Math.PI * 0.55,
     velocity: new THREE.Vector3(),
-    speed: 4.8,
-    state: "idle",
+    speed: 4.6,
+    state: "idle",        // idle, move, attack, special, guard, stunned, launched, down
     stateTimer: 0,
     stateDuration: 0.4,
     comboStep: 0,
@@ -110,23 +179,69 @@ const cpu = {
     guardBarrierMesh: null,
     aiTimer: 0,
     aiAction: "idle",
-    styleInfo: CPU_STYLES[1],
     animTime: 0
 };
 
-// 入力状態
 const input = {
     moveX: 0,
     moveZ: 0,
-    attack: false,
-    special: false,
     guard: false,
-    dodge: false,
     lockOn: true
 };
 
 // ========================================================
-// 2. Three.js 初期化 & UnrealBloom ポストプロセス
+// 3. トゥーンシェーディング（セル画階調）＆ 黒アウトライン生成ユーティリティ
+// ========================================================
+function getToonGradientMap() {
+    if (toonGradientMap) return toonGradientMap;
+    const data = new Uint8Array([
+        95, 95, 110, 255,
+        185, 185, 198, 255,
+        255, 255, 255, 255
+    ]);
+    const tex = new THREE.DataTexture(data, 3, 1, THREE.RGBAFormat);
+    tex.minFilter = THREE.NearestFilter;
+    tex.magFilter = THREE.NearestFilter;
+    tex.needsUpdate = true;
+    toonGradientMap = tex;
+    return tex;
+}
+
+function createToonMaterial(colorHex, emissiveHex = 0x000000, emissiveIntensity = 0.0) {
+    return new THREE.MeshToonMaterial({
+        color: new THREE.Color(colorHex),
+        gradientMap: getToonGradientMap(),
+        emissive: new THREE.Color(emissiveHex),
+        emissiveIntensity: emissiveIntensity
+    });
+}
+
+/**
+ * メッシュにアニメ調の黒い輪郭線（Inverted Hull Outline）を付与する
+ */
+function addAnimeOutline(mesh, thickness = 0.022) {
+    if (!mesh || !mesh.geometry) return mesh;
+    const outlineMat = new THREE.MeshBasicMaterial({
+        color: 0x111318,
+        side: THREE.BackSide
+    });
+    const outlineMesh = new THREE.Mesh(mesh.geometry, outlineMat);
+    outlineMesh.scale.setScalar(1.0 + thickness);
+    outlineMesh.name = "AnimeOutline";
+    mesh.add(outlineMesh);
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    return mesh;
+}
+
+function createOutlinedPart(geometry, material, outlineThickness = 0.024) {
+    const m = new THREE.Mesh(geometry, material);
+    addAnimeOutline(m, outlineThickness);
+    return m;
+}
+
+// ========================================================
+// 4. Three.js シーン初期化 ＆ 昼の絶景コロシアム構築 (画像1・2完全再現)
 // ========================================================
 async function initScene() {
     const container = document.getElementById('three-canvas-container');
@@ -134,11 +249,11 @@ async function initScene() {
     const height = container.clientHeight || window.innerHeight;
 
     scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x162436);
-    scene.fog = new THREE.FogExp2(0x203348, 0.02);
+    scene.background = new THREE.Color(0x6ab0de);
+    scene.fog = new THREE.FogExp2(0x8ecae6, 0.009);
 
-    camera = new THREE.PerspectiveCamera(50, width / height, 0.1, 250);
-    camera.position.set(0, 4.5, 9);
+    camera = new THREE.PerspectiveCamera(46, width / height, 0.1, 300);
+    camera.position.set(-5.8, 3.3, 6.2);
 
     renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
     renderer.setSize(width, height);
@@ -146,466 +261,1015 @@ async function initScene() {
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.15;
+    renderer.toneMappingExposure = 1.12;
     container.appendChild(renderer.domElement);
 
-    // UnrealBloomPass (発光エフェクトをより鮮烈に)
-    const renderScene = new RenderPass(scene, camera);
-    const bloomPass = new UnrealBloomPass(
-        new THREE.Vector2(width, height),
-        0.72, // strength
-        0.45, // radius
-        0.68  // threshold
-    );
-    composer = new EffectComposer(renderer);
-    composer.addPass(renderScene);
-    composer.addPass(bloomPass);
+    clock = new THREE.Clock();
 
-    // ライティング
-    const hemiLight = new THREE.HemisphereLight(0xffeedd, 0x223344, 1.2);
+    // 明るい昼の太陽光ライティング（セルシェーディングの陰影がパキッと出る設定）
+    const hemiLight = new THREE.HemisphereLight(0xdff9fb, 0x95afc0, 1.35);
+    hemiLight.position.set(0, 30, 0);
     scene.add(hemiLight);
 
-    const sunLight = new THREE.DirectionalLight(0xfff4e0, 2.6);
-    sunLight.position.set(14, 24, 12);
+    const sunLight = new THREE.DirectionalLight(0xfff6d6, 2.3);
+    sunLight.position.set(16, 28, 18);
     sunLight.castShadow = true;
     sunLight.shadow.mapSize.width = 2048;
     sunLight.shadow.mapSize.height = 2048;
+    sunLight.shadow.camera.near = 1;
+    sunLight.shadow.camera.far = 75;
     const d = 15;
     sunLight.shadow.camera.left = -d;
     sunLight.shadow.camera.right = d;
     sunLight.shadow.camera.top = d;
     sunLight.shadow.camera.bottom = -d;
+    sunLight.shadow.bias = -0.0005;
     scene.add(sunLight);
 
-    // プレイヤーとCPUのグループ & アクション回転用ピボットの準備
-    player.group = new THREE.Group();
-    player.animPivot = new THREE.Group();
-    player.group.add(player.animPivot);
-    scene.add(player.group);
-    player.guardBarrierMesh = createBarrierMesh(0x00d2d3);
-    player.group.add(player.guardBarrierMesh);
+    // 昼の絶景コロシアム（土の闘技場・木の柵・大樹・古代石柱・大海原・岩山）を構築
+    createDaylightAnimeColosseum();
 
-    cpu.group = new THREE.Group();
-    cpu.animPivot = new THREE.Group();
-    cpu.group.add(cpu.animPivot);
-    scene.add(cpu.group);
-    cpu.guardBarrierMesh = createBarrierMesh(0xff4757);
-    cpu.group.add(cpu.guardBarrierMesh);
+    // プレイヤー＆CPU生成
+    createCharacters();
 
-    buildOceanAndTorchLights();
-    await loadBlenderModels();
-
-    setupPlayerMeshFromBlender();
+    // 初期CPUボス配置
     spawnNextCpu();
 
     window.addEventListener('resize', onResize);
     animate();
 }
 
-function buildOceanAndTorchLights() {
-    const oceanGeo = new THREE.PlaneGeometry(350, 350, 48, 48);
-    const oceanMat = new THREE.MeshStandardMaterial({
-        color: 0x0b253c,
-        roughness: 0.15,
-        metalness: 0.85
+function createDaylightAnimeColosseum() {
+    const envGroup = new THREE.Group();
+
+    // 1. 土と石畳の円形コロシアム床（プロシージャルキャンバス模様）
+    const groundCanvas = document.createElement('canvas');
+    groundCanvas.width = 512;
+    groundCanvas.height = 512;
+    const gctx = groundCanvas.getContext('2d');
+    const grad = gctx.createRadialGradient(256, 256, 20, 256, 256, 256);
+    grad.addColorStop(0, '#d2b47c');
+    grad.addColorStop(0.65, '#b8945a');
+    grad.addColorStop(1, '#7c623a');
+    gctx.fillStyle = grad;
+    gctx.fillRect(0, 0, 512, 512);
+    // 土の色ムラと小石パッチ
+    for (let i = 0; i < 160; i++) {
+        gctx.fillStyle = i % 2 === 0 ? 'rgba(110, 82, 44, 0.22)' : 'rgba(230, 202, 148, 0.2)';
+        gctx.beginPath();
+        gctx.arc(Math.random() * 512, Math.random() * 512, 6 + Math.random() * 24, 0, Math.PI * 2);
+        gctx.fill();
+    }
+    const groundTex = new THREE.CanvasTexture(groundCanvas);
+    const floorMat = new THREE.MeshToonMaterial({ map: groundTex, gradientMap: getToonGradientMap() });
+    const floorMesh = new THREE.Mesh(new THREE.CylinderGeometry(arenaRadius + 1.5, arenaRadius + 2.2, 1.4, 48), floorMat);
+    floorMesh.position.y = -0.7;
+    floorMesh.receiveShadow = true;
+    envGroup.add(floorMesh);
+
+    // 外周の緑の芝生エッジ
+    const grassMat = createToonMaterial(0x588157);
+    const grassRing = new THREE.Mesh(new THREE.RingGeometry(arenaRadius - 0.3, arenaRadius + 3.2, 48), grassMat);
+    grassRing.rotation.x = -Math.PI / 2;
+    grassRing.position.y = 0.01;
+    grassRing.receiveShadow = true;
+    envGroup.add(grassRing);
+
+    // 2. 光る白い境界リング ＋ 木の杭と横木のフェンス（画像1・2の柵を再現）
+    const glowRingMat = new THREE.MeshBasicMaterial({ color: 0xfff3b0, side: THREE.DoubleSide, transparent: true, opacity: 0.75 });
+    const glowRing = new THREE.Mesh(new THREE.RingGeometry(arenaRadius - 0.12, arenaRadius + 0.08, 64), glowRingMat);
+    glowRing.rotation.x = -Math.PI / 2;
+    glowRing.position.y = 0.03;
+    envGroup.add(glowRing);
+
+    const woodMat = createToonMaterial(0x6f4e37);
+    const postCount = 28;
+    for (let i = 0; i < postCount; i++) {
+        const ang = (i / postCount) * Math.PI * 2;
+        // 手前側（カメラ側）は視界を遮らないよう開けておく
+        if (ang > Math.PI * 0.22 && ang < Math.PI * 0.78) continue;
+
+        const px = Math.cos(ang) * (arenaRadius + 0.3);
+        const pz = Math.sin(ang) * (arenaRadius + 0.3);
+        const post = createOutlinedPart(new THREE.BoxGeometry(0.24, 1.15, 0.24), woodMat, 0.02);
+        post.position.set(px, 0.55, pz);
+        post.rotation.y = -ang;
+        envGroup.add(post);
+
+        const rail = createOutlinedPart(new THREE.BoxGeometry(0.12, 0.16, 2.4), woodMat, 0.015);
+        rail.position.set(px, 0.82, pz);
+        rail.rotation.y = -ang;
+        envGroup.add(rail);
+    }
+
+    // 3. 右奥の「巨大な大樹 (Ancient Great Tree)」(画像1・2右上の象徴的な大樹)
+    const treeGroup = new THREE.Group();
+    treeGroup.position.set(7.5, 0, -9.8);
+    const trunkMat = createToonMaterial(0x5c4033);
+    const trunk = createOutlinedPart(new THREE.CylinderGeometry(1.4, 2.4, 11.0, 12), trunkMat, 0.015);
+    trunk.position.y = 5.0;
+    trunk.rotation.z = 0.08;
+    treeGroup.add(trunk);
+
+    const leafMat1 = createToonMaterial(0x386641);
+    const leafMat2 = createToonMaterial(0x6a994e);
+    const canopyPositions = [
+        [0, 10.5, 0, 4.8], [-3.2, 9.2, 1.2, 3.6], [3.0, 9.5, -1.0, 3.8], [0.8, 12.2, 1.0, 3.5]
+    ];
+    canopyPositions.forEach(([cx, cy, cz, cr], idx) => {
+        const canopy = createOutlinedPart(new THREE.DodecahedronGeometry(cr, 1), idx % 2 === 0 ? leafMat1 : leafMat2, 0.015);
+        canopy.position.set(cx, cy, cz);
+        treeGroup.add(canopy);
     });
-    seaWaterMesh = new THREE.Mesh(oceanGeo, oceanMat);
-    seaWaterMesh.rotation.x = -Math.PI / 2;
-    seaWaterMesh.position.y = -8.0;
-    scene.add(seaWaterMesh);
+    envGroup.add(treeGroup);
 
-    const torchAngles = [30, 150, 210, 330];
-    const r = 11.0 * 0.75;
-    torchAngles.forEach(deg => {
-        const rad = THREE.MathUtils.degToRad(deg);
-        const x = Math.cos(rad) * r;
-        const z = Math.sin(rad) * r;
-
-        const fireLight = new THREE.PointLight(0xff6b22, 4.8, 10.0);
-        fireLight.position.set(x, 2.35, z);
-        scene.add(fireLight);
-
-        const flameGeo = new THREE.OctahedronGeometry(0.28, 1);
-        const flameMat = new THREE.MeshBasicMaterial({ color: 0xffaa00 });
-        const flameMesh = new THREE.Mesh(flameGeo, flameMat);
-        flameMesh.position.set(x, 2.1, z);
-        scene.add(flameMesh);
-
-        torchFlames.push({ light: fireLight, mesh: flameMesh, baseX: x, baseY: 2.1, baseZ: z });
+    // 4. 古代ギリシャ風の折れた石柱 ＆ 左奥の岩山クリフ (画像1・2背景)
+    const pillarMat = createToonMaterial(0x95a5a6);
+    const pillarCoords = [
+        [-4.5, -11.5, 6.5, 0.05],
+        [-8.8, -8.5, 4.2, -0.12],
+        [3.2, -12.2, 4.8, 0.04],
+        [10.8, -6.2, 7.2, -0.18]
+    ];
+    pillarCoords.forEach(([x, z, h, tilt]) => {
+        const p = createOutlinedPart(new THREE.CylinderGeometry(0.65, 0.72, h, 12), pillarMat, 0.018);
+        p.position.set(x, h / 2 - 0.2, z);
+        p.rotation.z = tilt;
+        envGroup.add(p);
     });
+
+    // 左奥の岩山
+    const cliffMat = createToonMaterial(0x576574);
+    for (let i = 0; i < 6; i++) {
+        const rock = createOutlinedPart(new THREE.DodecahedronGeometry(3.2 + i * 0.6, 0), cliffMat, 0.012);
+        rock.position.set(-13.5 + i * 2.2, 2.2 + (i % 2) * 1.5, -11.0 - i * 1.2);
+        envGroup.add(rock);
+    }
+
+    // フィールド内の小石プロップ
+    for (let i = 0; i < 14; i++) {
+        const ang = Math.random() * Math.PI * 2;
+        const r = 6.2 + Math.random() * 3.2;
+        const pebble = createOutlinedPart(new THREE.DodecahedronGeometry(0.18 + Math.random() * 0.22, 0), cliffMat, 0.02);
+        pebble.position.set(Math.cos(ang) * r, 0.08, Math.sin(ang) * r);
+        pebble.scale.y = 0.55;
+        envGroup.add(pebble);
+    }
+
+    // 5. 遠景の青い大海原 (Ocean Horizon)
+    const seaGeo = new THREE.PlaneGeometry(360, 360);
+    const seaMat = new THREE.MeshToonMaterial({ color: 0x2e86de, gradientMap: getToonGradientMap() });
+    const sea = new THREE.Mesh(seaGeo, seaMat);
+    sea.rotation.x = -Math.PI / 2;
+    sea.position.y = -2.2;
+    envGroup.add(sea);
+
+    scene.add(envGroup);
 }
 
-async function loadBlenderModels() {
-    const loader = new GLTFLoader();
-    const loadGlb = (path) => new Promise((resolve) => {
-        loader.load(path, gltf => resolve(gltf.scene), undefined, () => resolve(null));
-    });
+// ========================================================
+// 5. 細密アニメ調 3D プレイヤーモデル生成（髪型・ゴーグル・服装・武器5種）
+// ========================================================
+function createCharacters() {
+    player.group = new THREE.Group();
+    player.animPivot = new THREE.Group();
+    player.group.add(player.animPivot);
 
-    const [arenaScene, fighterScene, swordScene, rifleScene, orbScene] = await Promise.all([
-        loadGlb('assets/models/colosseum_arena.glb'),
-        loadGlb('assets/models/fighter_cyber_knight.glb'),
-        loadGlb('assets/models/weapon_greatsword.glb'),
-        loadGlb('assets/models/weapon_sniper_rifle.glb'),
-        loadGlb('assets/models/weapon_psy_orb.glb')
-    ]);
+    player.guardBarrierMesh = createGuardShield(0x00f2fe);
+    player.group.add(player.guardBarrierMesh);
 
-    if (arenaScene) {
-        arenaScene.traverse(child => {
-            if (child.isMesh) {
-                child.castShadow = true;
-                child.receiveShadow = true;
-            }
+    // プレイヤー周囲の常時キラキラオーラ粒子 (画像1の主人公オーラ再現)
+    const auraGeo = new THREE.OctahedronGeometry(0.06, 0);
+    for (let i = 0; i < 14; i++) {
+        const pMat = new THREE.MeshBasicMaterial({ color: i % 2 === 0 ? 0x00f2fe : 0xffdd59, transparent: true, opacity: 0.85 });
+        const pMesh = new THREE.Mesh(auraGeo, pMat);
+        player.group.add(pMesh);
+        playerAuraParticles.push({
+            mesh: pMesh,
+            mat: pMat,
+            angle: (i / 14) * Math.PI * 2,
+            heightOffset: Math.random() * 1.6,
+            radius: 0.45 + Math.random() * 0.35,
+            speed: 1.8 + Math.random() * 1.5
         });
-        scene.add(arenaScene);
     }
 
-    blenderCache.fighterScene = fighterScene;
-    blenderCache.greatswordScene = swordScene;
-    blenderCache.sniperRifleScene = rifleScene;
-    blenderCache.psyOrbScene = orbScene;
-    blenderCache.loaded = true;
+    scene.add(player.group);
+
+    // CPUグループ初期化
+    cpu.group = new THREE.Group();
+    cpu.animPivot = new THREE.Group();
+    cpu.group.add(cpu.animPivot);
+    cpu.guardBarrierMesh = createGuardShield(0xff4757);
+    cpu.group.add(cpu.guardBarrierMesh);
+    scene.add(cpu.group);
+
+    rebuildPlayerModelFromDesign();
 }
 
-function extractJointsFromHierarchy(root) {
+/**
+ * ユーザーのキャラデザ設定（style, weapon, hairColor, outfitColor, auraColor）から
+ * トゥーン輪郭線付きの細密3Dアニメキャラクターを構築する
+ */
+function rebuildPlayerModelFromDesign() {
+    if (player.isVrm) return; // 外部VRM導入中はVRMを優先
+
+    if (player.mesh) {
+        player.animPivot.remove(player.mesh);
+    }
+
+    const d = player.design;
+    const hairCol = new THREE.Color(d.hairColor).getHex();
+    const outfitCol = new THREE.Color(d.outfitColor).getHex();
+    const auraCol = new THREE.Color(d.auraColor).getHex();
+    player.themeColor = auraCol;
+
+    // オーラ粒子の色を同期
+    playerAuraParticles.forEach((p, idx) => {
+        p.mat.color.setHex(idx % 2 === 0 ? auraCol : 0xffdd59);
+    });
+
+    const root = new THREE.Group();
     const joints = {};
-    root.traverse(c => {
-        if (c.name === "LeftArm" || c.name === "leftUpperArm") joints.leftArm = c;
-        if (c.name === "RightArm" || c.name === "rightUpperArm") joints.rightArm = c;
-        if (c.name === "LeftLeg" || c.name === "leftUpperLeg") joints.leftLeg = c;
-        if (c.name === "RightLeg" || c.name === "rightUpperLeg") joints.rightLeg = c;
-        if (c.name === "Torso" || c.name === "chest" || c.name === "spine") joints.torso = c;
-        if (c.name === "Head" || c.name === "head") joints.head = c;
-        if (c.name === "hips") joints.hips = c;
-    });
-    return joints;
-}
 
-function createFighterInstance(mainColorHex, glowColorHex) {
-    if (!blenderCache.fighterScene) {
-        const g = new THREE.Group();
-        const box = new THREE.Mesh(new THREE.BoxGeometry(0.5, 1.5, 0.3), new THREE.MeshStandardMaterial({ color: mainColorHex }));
-        box.position.y = 0.75;
-        g.add(box);
-        return { root: g, joints: {} };
+    const skinMat = createToonMaterial(0xffe0bd);
+    const hairMat = createToonMaterial(hairCol);
+    const outfitMat = createToonMaterial(outfitCol);
+    const whiteMat = createToonMaterial(0xf5f6fa);
+    const darkPantsMat = createToonMaterial(0x1e272e);
+    const bootMat = createToonMaterial(0x5c4033);
+    const goldMat = createToonMaterial(0xffd32a, 0xff9f1a, 0.2);
+    const glowMat = new THREE.MeshBasicMaterial({ color: auraCol });
+
+    // --- 胴体 (Torso) ---
+    const torso = new THREE.Group();
+    torso.position.set(0, 1.05, 0);
+    root.add(torso);
+    joints.torso = torso;
+
+    if (d.style === "astral_mage") {
+        // 魔導士ローブ
+        const robe = createOutlinedPart(new THREE.ConeGeometry(0.46, 1.05, 12), outfitMat);
+        robe.position.y = -0.15;
+        torso.add(robe);
+        const collar = createOutlinedPart(new THREE.CylinderGeometry(0.28, 0.34, 0.22, 12), goldMat);
+        collar.position.y = 0.25;
+        torso.add(collar);
+    } else if (d.style === "ponytail_valkyrie") {
+        // 女剣士バトルアーマー＆プリーツスカート
+        const chest = createOutlinedPart(new THREE.CylinderGeometry(0.23, 0.19, 0.44, 12), outfitMat);
+        chest.position.y = 0.14;
+        torso.add(chest);
+        const midriff = createOutlinedPart(new THREE.CylinderGeometry(0.18, 0.19, 0.16, 12), skinMat);
+        midriff.position.y = -0.10;
+        torso.add(midriff);
+        const skirt = createOutlinedPart(new THREE.CylinderGeometry(0.20, 0.36, 0.34, 14), outfitMat);
+        skirt.position.y = -0.28;
+        torso.add(skirt);
+    } else {
+        // 王道ジャケット＆インナーシャツ＆ベルト
+        const shirt = createOutlinedPart(new THREE.CylinderGeometry(0.23, 0.20, 0.54, 12), whiteMat);
+        shirt.position.y = 0.08;
+        torso.add(shirt);
+        const jacket = createOutlinedPart(new THREE.CylinderGeometry(0.26, 0.23, 0.48, 12, 1, false, 0, Math.PI * 1.65), outfitMat);
+        jacket.rotation.y = -Math.PI * 0.82;
+        jacket.position.y = 0.11;
+        torso.add(jacket);
+        // 肩パッド
+        const lPad = createOutlinedPart(new THREE.SphereGeometry(0.15, 10, 10), outfitMat);
+        lPad.position.set(0.27, 0.26, 0);
+        const rPad = createOutlinedPart(new THREE.SphereGeometry(0.15, 10, 10), outfitMat);
+        rPad.position.set(-0.27, 0.26, 0);
+        torso.add(lPad, rPad);
+        // ベルト＆ポーチ
+        const belt = createOutlinedPart(new THREE.CylinderGeometry(0.22, 0.22, 0.10, 12), bootMat);
+        belt.position.y = -0.18;
+        const buckle = createOutlinedPart(new THREE.BoxGeometry(0.12, 0.12, 0.08), goldMat);
+        buckle.position.set(0, -0.18, -0.21);
+        torso.add(belt, buckle);
     }
 
-    const root = blenderCache.fighterScene.clone(true);
-    const joints = extractJointsFromHierarchy(root);
+    // --- 頭部・アニメ顔・髪型・装備 (Head) ---
+    const headGroup = new THREE.Group();
+    headGroup.position.set(0, 0.54, 0);
+    torso.add(headGroup);
+    joints.head = headGroup;
 
-    root.traverse(child => {
-        if (child.isMesh && child.material) {
-            child.castShadow = true;
-            child.receiveShadow = true;
-            child.material = child.material.clone();
-            if (child.material.name.includes("ArmorMain")) {
-                child.material.color.setHex(mainColorHex);
-            } else if (child.material.name.includes("VisorGlow")) {
-                child.material.color.setHex(glowColorHex);
-                if (child.material.emissive) {
-                    child.material.emissive.setHex(glowColorHex);
-                    child.material.emissiveIntensity = 4.0;
-                }
-            }
-        }
+    const headSphere = createOutlinedPart(new THREE.SphereGeometry(0.23, 16, 16), skinMat);
+    headGroup.add(headSphere);
+
+    // アニメ風の瞳（前方は -Z 方向）
+    const eyeWhiteMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+    const eyePupilMat = new THREE.MeshBasicMaterial({ color: hairCol });
+    [-0.08, 0.08].forEach(ex => {
+        const ew = new THREE.Mesh(new THREE.SphereGeometry(0.038, 8, 8), eyeWhiteMat);
+        ew.scale.set(1, 1.3, 0.4);
+        ew.position.set(ex, 0.02, -0.205);
+        const ep = new THREE.Mesh(new THREE.SphereGeometry(0.024, 8, 8), eyePupilMat);
+        ep.scale.set(1, 1.3, 0.4);
+        ep.position.set(ex, 0.02, -0.218);
+        headGroup.add(ew, ep);
     });
 
-    return { root, joints };
-}
+    // スタイル別の髪型・頭装備
+    if (d.style === "goggle_hero") {
+        // 画像1：ツンツン青髪 ＋ 額のゴーグル
+        const hairCap = createOutlinedPart(new THREE.SphereGeometry(0.245, 14, 14, 0, Math.PI * 2, 0, Math.PI * 0.65), hairMat);
+        hairCap.rotation.x = -0.25;
+        headGroup.add(hairCap);
 
-function setupPlayerMeshFromBlender() {
-    if (player.mesh) player.animPivot.remove(player.mesh);
-    const { root, joints } = createFighterInstance(0x1e90ff, 0x00ffff);
+        const spikeAngles = [
+            [0, 0.28, -0.05, -0.4, 0],
+            [-0.18, 0.24, -0.02, -0.3, 0.5],
+            [0.18, 0.24, -0.02, -0.3, -0.5],
+            [-0.22, 0.12, 0.14, 0.5, 0.7],
+            [0.22, 0.12, 0.14, 0.5, -0.7],
+            [0, 0.22, 0.20, 0.8, 0],
+            [-0.12, 0.18, -0.18, -0.7, 0.2],
+            [0.12, 0.18, -0.18, -0.7, -0.2]
+        ];
+        spikeAngles.forEach(([sx, sy, sz, rx, rz]) => {
+            const sp = createOutlinedPart(new THREE.ConeGeometry(0.085, 0.26, 6), hairMat, 0.02);
+            sp.position.set(sx, sy, sz);
+            sp.rotation.set(rx, 0, rz);
+            headGroup.add(sp);
+        });
+
+        // 額のパイロットゴーグル
+        const strap = createOutlinedPart(new THREE.CylinderGeometry(0.248, 0.248, 0.06, 16), bootMat, 0.015);
+        strap.position.y = 0.11;
+        strap.rotation.z = 0.05;
+        headGroup.add(strap);
+        [-0.085, 0.085].forEach(gx => {
+            const rim = createOutlinedPart(new THREE.CylinderGeometry(0.065, 0.065, 0.06, 12), goldMat, 0.015);
+            rim.rotation.x = Math.PI / 2;
+            rim.position.set(gx, 0.12, -0.22);
+            const lens = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.066, 12), glowMat);
+            lens.rotation.x = Math.PI / 2;
+            lens.position.set(gx, 0.12, -0.22);
+            headGroup.add(rim, lens);
+        });
+
+    } else if (d.style === "ponytail_valkyrie") {
+        // 画像2左上：紅髪ポニーテール女剣士
+        const hairBase = createOutlinedPart(new THREE.SphereGeometry(0.245, 14, 14, 0, Math.PI * 2, 0, Math.PI * 0.65), hairMat);
+        headGroup.add(hairBase);
+        const ponytail = createOutlinedPart(new THREE.ConeGeometry(0.13, 0.62, 10), hairMat);
+        ponytail.position.set(0, 0.06, 0.34);
+        ponytail.rotation.x = -Math.PI * 0.62;
+        headGroup.add(ponytail);
+        const tie = createOutlinedPart(new THREE.TorusGeometry(0.07, 0.025, 8, 12), goldMat);
+        tie.position.set(0, 0.14, 0.22);
+        headGroup.add(tie);
+
+    } else if (d.style === "astral_mage") {
+        // 画像2右上：とんがり帽子の魔法使い
+        const brim = createOutlinedPart(new THREE.CylinderGeometry(0.52, 0.52, 0.04, 20), outfitMat);
+        brim.position.y = 0.16;
+        const cone = createOutlinedPart(new THREE.ConeGeometry(0.28, 0.65, 14), outfitMat);
+        cone.position.y = 0.46;
+        cone.rotation.x = 0.18;
+        headGroup.add(brim, cone);
+
+    } else if (d.style === "cyber_brawler") {
+        // 画像2左下：サイバーバイザー格闘家
+        const helm = createOutlinedPart(new THREE.SphereGeometry(0.255, 16, 16), outfitMat);
+        const visor = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.09, 0.16), new THREE.MeshBasicMaterial({ color: 0xff3838 }));
+        visor.position.set(0, 0.04, -0.19);
+        headGroup.add(helm, visor);
+
+    } else {
+        // 画像2右下：麦わら帽子の冒険者
+        const strawMat = createToonMaterial(0xfbc531);
+        const redBandMat = createToonMaterial(0xe84118);
+        const brim = createOutlinedPart(new THREE.CylinderGeometry(0.46, 0.46, 0.035, 20), strawMat);
+        brim.position.y = 0.16;
+        const dome = createOutlinedPart(new THREE.SphereGeometry(0.25, 14, 10, 0, Math.PI * 2, 0, Math.PI * 0.55), strawMat);
+        dome.position.y = 0.15;
+        const band = new THREE.Mesh(new THREE.CylinderGeometry(0.255, 0.255, 0.06, 16), redBandMat);
+        band.position.y = 0.19;
+        headGroup.add(brim, dome, band);
+    }
+
+    // --- 両腕 (LeftArm & RightArm) ---
+    const createArm = (isRight) => {
+        const armGroup = new THREE.Group();
+        armGroup.position.set(isRight ? -0.32 : 0.32, 0.22, 0);
+        const upper = createOutlinedPart(new THREE.CylinderGeometry(0.075, 0.068, 0.46, 10), skinMat);
+        upper.position.y = -0.20;
+        const glove = createOutlinedPart(new THREE.BoxGeometry(0.13, 0.18, 0.14), outfitMat);
+        glove.position.y = -0.44;
+        armGroup.add(upper, glove);
+        torso.add(armGroup);
+        return armGroup;
+    };
+    joints.leftArm = createArm(false);
+    joints.rightArm = createArm(true);
+
+    // --- 武器の装着 (5種) ---
+    attachSelectedWeapon(joints.rightArm, joints.leftArm, torso, d.weapon, auraCol);
+
+    // --- 両脚 (LeftLeg & RightLeg) ---
+    const createLeg = (isRight) => {
+        const legGroup = new THREE.Group();
+        legGroup.position.set(isRight ? -0.13 : 0.13, 0.78, 0);
+        const pant = createOutlinedPart(new THREE.CylinderGeometry(0.095, 0.08, 0.44, 10), darkPantsMat);
+        pant.position.y = -0.22;
+        const boot = createOutlinedPart(new THREE.BoxGeometry(0.16, 0.34, 0.26), bootMat);
+        boot.position.set(0, -0.58, -0.04);
+        legGroup.add(pant, boot);
+        root.add(legGroup);
+        return legGroup;
+    };
+    joints.leftLeg = createLeg(false);
+    joints.rightLeg = createLeg(true);
+
     player.mesh = root;
     player.joints = joints;
-    player.mesh.visible = !player.isVrm;
-    player.animPivot.add(player.mesh);
+    player.animPivot.add(root);
 
-    if (blenderCache.greatswordScene && joints.rightArm) {
-        const pSword = blenderCache.greatswordScene.clone(true);
-        pSword.scale.set(0.85, 0.85, 0.85);
-        pSword.position.set(-0.36, -0.35, 0.25);
-        pSword.rotation.x = Math.PI / 2.2;
-        pSword.traverse(c => {
-            if (c.isMesh && c.material) {
-                c.material = c.material.clone();
-                if (c.material.name.includes("CrimsonCore")) {
-                    c.material.color.setHex(0x00ffff);
-                    if (c.material.emissive) c.material.emissive.setHex(0x00ffff);
-                }
-            }
+    // 左上の丸型顔アイコンCanvasも再描画
+    drawPlayerPortrait();
+}
+
+/**
+ * 選択された武器メッシュを生成して腕に装着する
+ */
+function attachSelectedWeapon(rightArm, leftArm, torso, weaponType, auraCol) {
+    const steelMat = createToonMaterial(0x7f8fa6);
+    const darkMetalMat = createToonMaterial(0x2f3640);
+    const goldMat = createToonMaterial(0xffd32a);
+    const glowMat = new THREE.MeshBasicMaterial({ color: auraCol });
+
+    if (weaponType === "rune_greatsword") {
+        // 画像1の象徴的な「大型メカニック・ルーン大剣」
+        const swordGroup = new THREE.Group();
+        swordGroup.position.set(0, -0.48, -0.12);
+        swordGroup.rotation.x = -Math.PI * 0.42;
+
+        const hilt = createOutlinedPart(new THREE.CylinderGeometry(0.04, 0.04, 0.42, 8), darkMetalMat);
+        const guard = createOutlinedPart(new THREE.BoxGeometry(0.44, 0.16, 0.14), darkMetalMat);
+        guard.position.y = 0.24;
+        const coreGem = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 0.16, 12), glowMat);
+        coreGem.rotation.x = Math.PI / 2;
+        coreGem.position.y = 0.24;
+
+        const blade = createOutlinedPart(new THREE.BoxGeometry(0.24, 1.48, 0.05), steelMat, 0.025);
+        blade.position.y = 1.02;
+        const bladeTip = createOutlinedPart(new THREE.ConeGeometry(0.14, 0.34, 4), steelMat, 0.025);
+        bladeTip.rotation.y = Math.PI / 4;
+        bladeTip.position.y = 1.92;
+
+        // 刀身中央の青く光るエネルギーライン (画像1再現)
+        const energyLine = new THREE.Mesh(new THREE.BoxGeometry(0.05, 1.25, 0.065), glowMat);
+        energyLine.position.y = 0.98;
+
+        swordGroup.add(hilt, guard, coreGem, blade, bladeTip, energyLine);
+        rightArm.add(swordGroup);
+
+    } else if (weaponType === "sword_shield") {
+        // 片手剣 ＆ 左腕のラウンドシールド
+        const swordGroup = new THREE.Group();
+        swordGroup.position.set(0, -0.46, -0.10);
+        swordGroup.rotation.x = -Math.PI * 0.45;
+        const guard = createOutlinedPart(new THREE.BoxGeometry(0.32, 0.08, 0.10), goldMat);
+        guard.position.y = 0.15;
+        const blade = createOutlinedPart(new THREE.BoxGeometry(0.12, 1.05, 0.04), steelMat);
+        blade.position.y = 0.70;
+        swordGroup.add(guard, blade);
+        rightArm.add(swordGroup);
+
+        const shield = createOutlinedPart(new THREE.CylinderGeometry(0.38, 0.38, 0.06, 16), steelMat);
+        shield.rotation.z = Math.PI / 2;
+        shield.position.set(0.14, -0.36, -0.05);
+        leftArm.add(shield);
+
+    } else if (weaponType === "magic_staff") {
+        // 星霊の魔導スタッフ
+        const staffGroup = new THREE.Group();
+        staffGroup.position.set(0, -0.44, -0.10);
+        staffGroup.rotation.x = -Math.PI * 0.38;
+        const rod = createOutlinedPart(new THREE.CylinderGeometry(0.035, 0.035, 1.55, 8), createToonMaterial(0x6f4e37));
+        rod.position.y = 0.55;
+        const ring = createOutlinedPart(new THREE.TorusGeometry(0.16, 0.03, 8, 16), goldMat);
+        ring.position.y = 1.42;
+        const orb = new THREE.Mesh(new THREE.OctahedronGeometry(0.11, 1), glowMat);
+        orb.position.y = 1.42;
+        staffGroup.add(rod, ring, orb);
+        rightArm.add(staffGroup);
+
+    } else if (weaponType === "knuckle_gauntlet") {
+        // 両拳の大型ガントレット
+        [rightArm, leftArm].forEach(arm => {
+            const fist = createOutlinedPart(new THREE.DodecahedronGeometry(0.18, 0), goldMat);
+            fist.position.set(0, -0.48, -0.04);
+            arm.add(fist);
         });
-        joints.rightArm.add(pSword);
-    }
-}
 
-function createBarrierMesh(colorHex) {
-    const group = new THREE.Group();
-    const outer = new THREE.Mesh(
-        new THREE.IcosahedronGeometry(1.18, 2),
-        new THREE.MeshBasicMaterial({ color: colorHex, wireframe: true, transparent: true, opacity: 0.0 })
-    );
-    const inner = new THREE.Mesh(
-        new THREE.SphereGeometry(1.12, 24, 24),
-        new THREE.MeshBasicMaterial({ color: colorHex, transparent: true, opacity: 0.0, side: THREE.DoubleSide })
-    );
-    group.add(outer);
-    group.add(inner);
-    group.position.y = 1.0;
-    group.userData = { outer, inner };
-    return group;
-}
-
-function setBarrierOpacity(barrierGroup, active, elapsedTime) {
-    if (!barrierGroup || !barrierGroup.userData.outer) return;
-    if (active) {
-        barrierGroup.userData.outer.material.opacity = 0.65 + Math.sin(elapsedTime * 15) * 0.15;
-        barrierGroup.userData.inner.material.opacity = 0.18;
-        barrierGroup.rotation.y += 0.04;
-    } else {
-        barrierGroup.userData.outer.material.opacity = 0.0;
-        barrierGroup.userData.inner.material.opacity = 0.0;
+    } else if (weaponType === "crimson_katana") {
+        // 妖刀・紅蓮大太刀
+        const katanaGroup = new THREE.Group();
+        katanaGroup.position.set(0, -0.46, -0.10);
+        katanaGroup.rotation.x = -Math.PI * 0.45;
+        const tsuba = createOutlinedPart(new THREE.CylinderGeometry(0.11, 0.11, 0.03, 12), goldMat);
+        tsuba.position.y = 0.16;
+        const blade = createOutlinedPart(new THREE.BoxGeometry(0.06, 1.42, 0.03), glowMat);
+        blade.position.y = 0.88;
+        katanaGroup.add(tsuba, blade);
+        rightArm.add(katanaGroup);
     }
 }
 
 // ========================================================
-// 3. CPUの3Dモデル & Blender製専用武器の装備
+// 6. CPU ボスモンスター 5種の細密トゥーン3Dモデル生成 (画像1・2再現)
 // ========================================================
-function setupCpuModel(styleInfo) {
-    if (cpu.mesh) cpu.animPivot.remove(cpu.mesh);
-    if (cpu.weaponMesh && cpu.weaponMesh.parent) cpu.weaponMesh.parent.remove(cpu.weaponMesh);
-    cpu.orbs.forEach(o => cpu.group.remove(o.mesh));
-    cpu.orbs = [];
-    cpu.weaponMesh = null;
-
-    let mainColor = 0xd63031;
-    let glowColor = 0xffa502;
-    if (styleInfo.category.includes("snipe")) {
-        mainColor = 0x6c5ce7;
-        glowColor = 0x00d2d3;
-    } else if (styleInfo.category === "melee-bare") {
-        mainColor = 0xe17055;
-        glowColor = 0xffdd59;
+function setupCpuBossModel(bossInfo) {
+    if (cpu.mesh) {
+        cpu.animPivot.remove(cpu.mesh);
     }
-    cpu.themeColor = glowColor;
 
-    const { root, joints } = createFighterInstance(mainColor, glowColor);
+    const root = new THREE.Group();
+    const joints = {};
+
+    const skinMat = createToonMaterial(bossInfo.skinColor);
+    const armorMat = createToonMaterial(bossInfo.armorColor);
+    const accentMat = createToonMaterial(bossInfo.accentColor);
+    const whiteMat = createToonMaterial(0xf5f6fa);
+    const darkMat = createToonMaterial(0x1e272e);
+
+    // 筋骨隆々の巨躯 (Torso)
+    const torso = new THREE.Group();
+    torso.position.set(0, 1.25, 0);
+    root.add(torso);
+    joints.torso = torso;
+
+    const chest = createOutlinedPart(new THREE.CylinderGeometry(0.48, 0.36, 0.78, 12), skinMat, 0.025);
+    chest.position.y = 0.15;
+    torso.add(chest);
+
+    const armorPlate = createOutlinedPart(new THREE.CylinderGeometry(0.50, 0.42, 0.42, 12), armorMat, 0.022);
+    armorPlate.position.y = 0.22;
+    torso.add(armorPlate);
+
+    const belt = createOutlinedPart(new THREE.CylinderGeometry(0.39, 0.42, 0.22, 12), darkMat);
+    belt.position.y = -0.25;
+    const buckle = createOutlinedPart(new THREE.SphereGeometry(0.13, 10, 10), accentMat);
+    buckle.position.set(0, -0.25, -0.38);
+    torso.add(belt, buckle);
+
+    // 両肩のトゲ付き巨大ショルダーアーマー (画像1の赤鬼・画像2のベヒーモス再現)
+    [-0.54, 0.54].forEach(sx => {
+        const pauldron = createOutlinedPart(new THREE.SphereGeometry(0.28, 12, 12), armorMat, 0.025);
+        pauldron.position.set(sx, 0.38, 0);
+        for (let s = 0; s < 3; s++) {
+            const spike = createOutlinedPart(new THREE.ConeGeometry(0.065, 0.26, 6), whiteMat, 0.02);
+            spike.position.set((sx > 0 ? 0.16 : -0.16), 0.18 + s * 0.05, (s - 1) * 0.12);
+            spike.rotation.z = sx > 0 ? -0.6 : 0.6;
+            pauldron.add(spike);
+        }
+        torso.add(pauldron);
+    });
+
+    // 頭部 (Head)
+    const head = new THREE.Group();
+    head.position.set(0, 0.68, -0.05);
+    torso.add(head);
+    joints.head = head;
+
+    const face = createOutlinedPart(new THREE.DodecahedronGeometry(0.28, 1), skinMat, 0.025);
+    head.add(face);
+
+    // 怒り目 ＆ 2本の角
+    const eyeMat = new THREE.MeshBasicMaterial({ color: 0xffdd59 });
+    [-0.10, 0.10].forEach(ex => {
+        const eye = new THREE.Mesh(new THREE.SphereGeometry(0.045, 8, 8), eyeMat);
+        eye.position.set(ex, 0.05, -0.25);
+        const horn = createOutlinedPart(new THREE.ConeGeometry(0.065, 0.32, 6), whiteMat, 0.02);
+        horn.position.set(ex * 1.6, 0.28, -0.08);
+        horn.rotation.x = -0.35;
+        head.add(eye, horn);
+    });
+
+    // リザードマンの場合は長い尻尾を追加
+    if (bossInfo.id === "lizard_dragonkin") {
+        const tail = createOutlinedPart(new THREE.ConeGeometry(0.18, 1.35, 8), skinMat);
+        tail.position.set(0, -0.35, 0.65);
+        tail.rotation.x = Math.PI * 0.62;
+        torso.add(tail);
+    }
+
+    // 剛腕 (LeftArm & RightArm)
+    const createBossArm = (isRight) => {
+        const armGroup = new THREE.Group();
+        armGroup.position.set(isRight ? -0.56 : 0.56, 0.28, 0);
+        const upper = createOutlinedPart(new THREE.CylinderGeometry(0.15, 0.13, 0.56, 10), skinMat);
+        upper.position.y = -0.24;
+        const bracer = createOutlinedPart(new THREE.CylinderGeometry(0.16, 0.15, 0.28, 10), armorMat);
+        bracer.position.y = -0.52;
+        armGroup.add(upper, bracer);
+        torso.add(armGroup);
+        return armGroup;
+    };
+    joints.leftArm = createBossArm(false);
+    joints.rightArm = createBossArm(true);
+
+    // 赤鬼の「巨大ウォーハンマー」（画像1の赤鬼が持つハンマーを完全再現！）
+    if (bossInfo.category === "melee-weapon") {
+        const hammerGroup = new THREE.Group();
+        hammerGroup.position.set(0, -0.62, -0.15);
+        hammerGroup.rotation.x = -Math.PI * 0.42;
+
+        const handle = createOutlinedPart(new THREE.CylinderGeometry(0.05, 0.05, 1.85, 8), darkMat);
+        handle.position.y = 0.55;
+        const headCyl = createOutlinedPart(new THREE.CylinderGeometry(0.34, 0.34, 0.78, 12), armorMat, 0.025);
+        headCyl.rotation.z = Math.PI / 2;
+        headCyl.position.y = 1.42;
+        const band1 = createOutlinedPart(new THREE.CylinderGeometry(0.36, 0.36, 0.10, 12), accentMat);
+        band1.rotation.z = Math.PI / 2;
+        band1.position.set(-0.22, 1.42, 0);
+        const band2 = band1.clone();
+        band2.position.set(0.22, 1.42, 0);
+
+        hammerGroup.add(handle, headCyl, band1, band2);
+        joints.rightArm.add(hammerGroup);
+    }
+
+    // 両脚
+    const createBossLeg = (isRight) => {
+        const legGroup = new THREE.Group();
+        legGroup.position.set(isRight ? -0.22 : 0.22, 0.85, 0);
+        const thigh = createOutlinedPart(new THREE.CylinderGeometry(0.17, 0.14, 0.55, 10), darkMat);
+        thigh.position.y = -0.26;
+        const boot = createOutlinedPart(new THREE.BoxGeometry(0.24, 0.35, 0.34), armorMat);
+        boot.position.set(0, -0.64, -0.05);
+        legGroup.add(thigh, boot);
+        root.add(legGroup);
+        return legGroup;
+    };
+    joints.leftLeg = createBossLeg(false);
+    joints.rightLeg = createBossLeg(true);
+
+    root.scale.setScalar(bossInfo.scale || 1.25);
     cpu.mesh = root;
     cpu.joints = joints;
-    cpu.animPivot.add(cpu.mesh);
+    cpu.animPivot.add(root);
 
-    const attachParent = joints.rightArm || cpu.animPivot;
-
-    if (styleInfo.category === "melee-weapon" && blenderCache.greatswordScene) {
-        const sword = blenderCache.greatswordScene.clone(true);
-        sword.position.set(-0.36, -0.35, 0.25);
-        sword.rotation.x = Math.PI / 2.2;
-        attachParent.add(sword);
-        cpu.weaponMesh = sword;
-    } else if (styleInfo.category === "snipe-weapon" && blenderCache.sniperRifleScene) {
-        const rifle = blenderCache.sniperRifleScene.clone(true);
-        rifle.position.set(-0.36, -0.30, 0.20);
-        attachParent.add(rifle);
-        cpu.weaponMesh = rifle;
-    } else if (styleInfo.category === "snipe-bare" && blenderCache.psyOrbScene) {
-        for (let i = 0; i < 3; i++) {
-            const orb = blenderCache.psyOrbScene.clone(true);
-            cpu.group.add(orb);
-            cpu.orbs.push({ mesh: orb, angleOffset: (i * Math.PI * 2) / 3 });
-        }
-    }
+    drawCpuPortrait(bossInfo);
 }
 
 // ========================================================
-// 4. 自作キャラマルチローダー (.vrm / .glb / .png / .jpg & プリセット対応)
+// 7. 左上＆右上の丸型アニメ顔アイコン Canvas 描画 (画像1・2再現)
 // ========================================================
-function setupVrmLoader() {
-    const dropArea = document.getElementById('drop-area');
-    const dropHint = document.getElementById('drop-hint');
-    const fileInput = document.getElementById('vrm-file-input');
+function drawPlayerPortrait() {
+    const canvas = document.getElementById('player-portrait-canvas');
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    const w = canvas.width, h = canvas.height;
+    ctx.clearRect(0, 0, w, h);
+
+    // 背景グラデーション
+    const bg = ctx.createRadialGradient(w / 2, h / 2, 6, w / 2, h / 2, w / 2);
+    bg.addColorStop(0, player.design.auraColor || '#00f2fe');
+    bg.addColorStop(1, '#1e3799');
+    ctx.fillStyle = bg;
+    ctx.fillRect(0, 0, w, h);
+
+    // 襟・ジャケット
+    ctx.fillStyle = player.design.outfitColor || '#253b56';
+    ctx.beginPath();
+    ctx.arc(w / 2, h + 6, 34, Math.PI, 0);
+    ctx.fill();
+    ctx.lineWidth = 2.5;
+    ctx.strokeStyle = '#111';
+    ctx.stroke();
+
+    // 顔輪郭
+    ctx.fillStyle = '#ffe0bd';
+    ctx.beginPath();
+    ctx.arc(w / 2, h / 2 + 6, 22, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+
+    // アニメ瞳
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(w / 2 - 13, h / 2 + 2, 8, 9);
+    ctx.fillRect(w / 2 + 5, h / 2 + 2, 8, 9);
+    ctx.fillStyle = player.design.hairColor || '#1e90ff';
+    ctx.fillRect(w / 2 - 11, h / 2 + 3, 5, 7);
+    ctx.fillRect(w / 2 + 7, h / 2 + 3, 5, 7);
+    ctx.fillStyle = '#000';
+    ctx.fillRect(w / 2 - 14, h / 2, 10, 2);
+    ctx.fillRect(w / 2 + 4, h / 2, 10, 2);
+
+    // 口元（自信のある笑み）
+    ctx.beginPath();
+    ctx.arc(w / 2, h / 2 + 15, 5, 0.1 * Math.PI, 0.85 * Math.PI);
+    ctx.stroke();
+
+    // ツンツン髪
+    ctx.fillStyle = player.design.hairColor || '#1e90ff';
+    ctx.beginPath();
+    ctx.moveTo(w / 2 - 24, h / 2 + 2);
+    ctx.lineTo(w / 2 - 28, h / 2 - 16);
+    ctx.lineTo(w / 2 - 12, h / 2 - 12);
+    ctx.lineTo(w / 2 - 4, h / 2 - 28);
+    ctx.lineTo(w / 2 + 8, h / 2 - 14);
+    ctx.lineTo(w / 2 + 24, h / 2 - 22);
+    ctx.lineTo(w / 2 + 25, h / 2 + 2);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+
+    // 額のゴーグル（goggle_hero時）
+    if (player.design.style === 'goggle_hero') {
+        ctx.fillStyle = '#00f2fe';
+        ctx.strokeStyle = '#ffd32a';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(w / 2 - 9, h / 2 - 8, 6, 0, Math.PI * 2);
+        ctx.arc(w / 2 + 9, h / 2 - 8, 6, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+    }
+}
+
+function drawCpuPortrait(bossInfo) {
+    const canvas = document.getElementById('cpu-portrait-canvas');
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    const w = canvas.width, h = canvas.height;
+    ctx.clearRect(0, 0, w, h);
+
+    const bg = ctx.createRadialGradient(w / 2, h / 2, 6, w / 2, h / 2, w / 2);
+    bg.addColorStop(0, '#ff5e57');
+    bg.addColorStop(1, '#4a0e0e');
+    ctx.fillStyle = bg;
+    ctx.fillRect(0, 0, w, h);
+
+    const hexStr = '#' + new THREE.Color(bossInfo.skinColor).getHexString();
+    ctx.fillStyle = hexStr;
+    ctx.strokeStyle = '#111';
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    ctx.arc(w / 2, h / 2 + 6, 24, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+
+    // 2本の白い角
+    ctx.fillStyle = '#f5f6fa';
+    [-16, 16].forEach(hx => {
+        ctx.beginPath();
+        ctx.moveTo(w / 2 + hx - 6, h / 2 - 10);
+        ctx.lineTo(w / 2 + hx * 1.4, h / 2 - 28);
+        ctx.lineTo(w / 2 + hx + 6, h / 2 - 10);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+    });
+
+    // 眼光と牙
+    ctx.fillStyle = '#ffdd59';
+    ctx.fillRect(w / 2 - 14, h / 2, 9, 6);
+    ctx.fillRect(w / 2 + 5, h / 2, 9, 6);
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(w / 2 - 10, h / 2 + 14, 20, 6);
+}
+
+function createGuardShield(colorHex) {
+    const geo = new THREE.SphereGeometry(1.15, 20, 20);
+    const mat = new THREE.MeshBasicMaterial({
+        color: colorHex,
+        wireframe: true,
+        transparent: true,
+        opacity: 0.0
+    });
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.position.y = 1.05;
+    return mesh;
+}
+
+// ========================================================
+// 8. 🎨 オリキャラ・クリエイト＆導入工房（1人1体限定・範囲内パラメータ配分）
+// ========================================================
+function setupCreatorStudio() {
+    const modal = document.getElementById('creator-modal');
+    const openBtn = document.getElementById('open-creator-btn');
+    const avatarFrame = document.getElementById('player-avatar-frame');
+    const closeBtn = document.getElementById('close-creator-btn');
+    const previewBtn = document.getElementById('btn-apply-preview');
+    const lockBtn = document.getElementById('btn-lock-register');
     const resetBtn = document.getElementById('reset-avatar-btn');
 
-    ['dragenter', 'dragover'].forEach(name => {
-        dropArea.addEventListener(name, (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            dropHint.classList.add('drag-over');
+    const sliders = {
+        atk: document.getElementById('sl-atk'),
+        range: document.getElementById('sl-range'),
+        stun: document.getElementById('sl-stun'),
+        atkspd: document.getElementById('sl-atkspd'),
+        spd: document.getElementById('sl-spd')
+    };
+
+    const MAX_TOTAL_PT = 100;
+
+    // 合計100PTを超えないようにスライダーをリアルタイム制御し、決められた範囲にマッピング
+    function syncSlidersAndCalculateStats(changedKey) {
+        let total = Object.values(sliders).reduce((acc, el) => acc + Number(el.value), 0);
+        if (total > MAX_TOTAL_PT && changedKey) {
+            const overflow = total - MAX_TOTAL_PT;
+            sliders[changedKey].value = Math.max(0, Number(sliders[changedKey].value) - overflow);
+            total = MAX_TOTAL_PT;
+        }
+
+        const ptAtk = Number(sliders.atk.value);
+        const ptRange = Number(sliders.range.value);
+        const ptStun = Number(sliders.stun.value);
+        const ptAtkSpd = Number(sliders.atkspd.value);
+        const ptSpd = Number(sliders.spd.value);
+
+        // 決められた範囲（Min〜Max）への線形マッピング
+        const calcAtk = Number((0.85 + (ptAtk / 40) * 0.55).toFixed(2));       // 0.85x 〜 1.40x
+        const calcRange = Number((2.4 + (ptRange / 40) * 2.1).toFixed(1));     // 2.4m 〜 4.5m
+        const calcStun = Number((0.80 + (ptStun / 40) * 0.70).toFixed(2));     // 0.80x 〜 1.50x
+        const calcAtkSpd = Number((0.85 + (ptAtkSpd / 40) * 0.50).toFixed(2)); // 0.85x 〜 1.35x
+        const calcSpd = Number((5.2 + (ptSpd / 40) * 2.8).toFixed(1));         // 5.2 〜 8.0
+
+        document.getElementById('val-atk').innerText = `${calcAtk.toFixed(2)}x (${ptAtk}pt)`;
+        document.getElementById('val-range').innerText = `${calcRange.toFixed(1)}m (${ptRange}pt)`;
+        document.getElementById('val-stun').innerText = `${calcStun.toFixed(2)}x (${ptStun}pt)`;
+        document.getElementById('val-atkspd').innerText = `${calcAtkSpd.toFixed(2)}x (${ptAtkSpd}pt)`;
+        document.getElementById('val-spd').innerText = `${calcSpd.toFixed(1)} (${ptSpd}pt)`;
+
+        const rem = MAX_TOTAL_PT - total;
+        const badge = document.getElementById('cr-pt-badge');
+        badge.innerText = `残り: ${rem} / ${MAX_TOTAL_PT} PT`;
+        badge.style.background = rem === 0 ? '#10b981' : '#0284c7';
+
+        return { calcAtk, calcRange, calcStun, calcAtkSpd, calcSpd };
+    }
+
+    Object.entries(sliders).forEach(([key, el]) => {
+        el.addEventListener('input', () => syncSlidersAndCalculateStats(key));
+    });
+
+    // ワンクリック配分プリセット
+    document.querySelectorAll('.alloc-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            if (player.isCustomCharLocked) {
+                alert('🔒 既に1人1体のオリキャラが本登録（ロック）されています！');
+                return;
+            }
+            const preset = btn.getAttribute('data-preset');
+            if (preset === 'balance') {
+                sliders.atk.value = 20; sliders.range.value = 20; sliders.stun.value = 20; sliders.atkspd.value = 20; sliders.spd.value = 20;
+            } else if (preset === 'power_range') {
+                sliders.atk.value = 36; sliders.range.value = 36; sliders.stun.value = 16; sliders.atkspd.value = 6; sliders.spd.value = 6;
+            } else if (preset === 'combo_stun') {
+                sliders.atk.value = 12; sliders.range.value = 14; sliders.stun.value = 34; sliders.atkspd.value = 24; sliders.spd.value = 16;
+            }
+            syncSlidersAndCalculateStats();
         });
     });
 
-    ['dragleave', 'drop'].forEach(name => {
-        dropArea.addEventListener(name, (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            dropHint.classList.remove('drag-over');
-        });
+    function applyStudioSettingsToPlayer(lockRegistration = false) {
+        if (player.isCustomCharLocked) {
+            showAnnouncement(`🔒 1人1体制限中！ (${player.registeredCharName})`, "#ff4757");
+            alert(`⚠️ オリキャラの導入・登録は【1人1体まで】です！\n現在の登録キャラ: ${player.registeredCharName}\n\n変更したい場合は左下の「🗑️ 登録解除(0連勝へ)」で連勝をリセットしてください。`);
+            return;
+        }
+
+        const stats = syncSlidersAndCalculateStats();
+        player.design.name = document.getElementById('cr-name').value.trim() || "PLAYER (自作)";
+        player.design.style = document.getElementById('cr-style').value;
+        player.design.weapon = document.getElementById('cr-weapon').value;
+        player.design.hairColor = document.getElementById('cr-hair-color').value;
+        player.design.outfitColor = document.getElementById('cr-outfit-color').value;
+        player.design.auraColor = document.getElementById('cr-aura-color').value;
+
+        player.motionType = document.getElementById('cr-motion').value;
+        player.vfxElement = document.getElementById('cr-vfx').value;
+        player.skillName = document.getElementById('cr-skill-name').value.trim() || "⚡ 蒼雷・神速烈空閃 ⚡";
+
+        player.atkScale = stats.calcAtk;
+        player.attackRange = stats.calcRange;
+        player.stunPower = stats.calcStun;
+        player.atkSpeed = stats.calcAtkSpd;
+        player.speed = stats.calcSpd;
+        player.specialRange = Number((player.attackRange * 3.1).toFixed(1));
+
+        // 外部VRMから自作デザインへ戻す場合はクリーンアップ
+        if (player.vrm) {
+            player.animPivot.remove(player.vrm.scene);
+            VRMUtils.deepDispose(player.vrm.scene);
+            player.vrm = null;
+        }
+        if (player.customGlb) {
+            player.animPivot.remove(player.customGlb);
+            player.customGlb = null;
+        }
+        player.isVrm = false;
+        player.customJoints = null;
+
+        rebuildPlayerModelFromDesign();
+        updatePlayerSpecHud();
+
+        document.getElementById('player-name').innerText = player.design.name;
+        spawnGroundSlamVFX(player.position, player.themeColor, 1.1);
+
+        if (lockRegistration) {
+            lockCustomCharacterSlot(player.design.name);
+            modal.style.display = 'none';
+            showAnnouncement(`🔒 ${player.design.name} を本登録しました！(1/1体)`, "#00f2fe");
+        } else {
+            modal.style.display = 'none';
+            showAnnouncement(`✨ プレビュー反映完了！`, "#ffd32a");
+        }
+    }
+
+    openBtn.addEventListener('click', () => { modal.style.display = 'flex'; });
+    avatarFrame.addEventListener('click', () => { modal.style.display = 'flex'; });
+    closeBtn.addEventListener('click', () => { modal.style.display = 'none'; });
+    previewBtn.addEventListener('click', () => applyStudioSettingsToPlayer(false));
+    lockBtn.addEventListener('click', () => applyStudioSettingsToPlayer(true));
+
+    resetBtn.addEventListener('click', () => {
+        const ok = confirm(`⚠️ 登録済みオリキャラ「${player.registeredCharName}」を解除すると、現在の連勝記録（${currentWins}連勝）も 0 にリセットされます。\nよろしいですか？`);
+        if (!ok) return;
+        unlockAndResetCharacter();
     });
 
-    dropArea.addEventListener('drop', (e) => {
-        const files = e.dataTransfer.files;
-        if (files && files.length > 0) handleUploadedFile(files[0]);
+    // D&D ＆ 外部ファイル（.vrm / .glb / .png）導入
+    const dropArea = document.getElementById('drop-area');
+    const fileInput = document.getElementById('vrm-file-input');
+    ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(ev => {
+        dropArea.addEventListener(ev, e => { e.preventDefault(); e.stopPropagation(); });
     });
-
-    fileInput.addEventListener('change', (e) => {
-        if (e.target.files && e.target.files.length > 0) handleUploadedFile(e.target.files[0]);
+    dropArea.addEventListener('drop', e => {
+        if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+            handleExternalFileImport(e.dataTransfer.files[0]);
+        }
     });
-
+    fileInput.addEventListener('change', e => {
+        if (e.target.files && e.target.files.length > 0) {
+            handleExternalFileImport(e.target.files[0]);
+            fileInput.value = '';
+        }
+    });
     document.querySelectorAll('.dock-preset-btn').forEach(btn => {
         btn.addEventListener('click', () => {
             const vrmPath = btn.getAttribute('data-vrm');
-            if (vrmPath) loadCharacterFromUrl(vrmPath, vrmPath.split('/').pop());
+            if (vrmPath) loadExternalModelFromUrl(vrmPath, vrmPath.split('/').pop());
         });
     });
 
-    resetBtn.addEventListener('click', restoreDefaultPlayer);
+    syncSlidersAndCalculateStats();
+    updatePlayerSpecHud();
 }
 
-function handleUploadedFile(file) {
-    const lower = file.name.toLowerCase();
-    const blobUrl = URL.createObjectURL(file);
+function lockCustomCharacterSlot(charName) {
+    player.isCustomCharLocked = true;
+    player.registeredCharName = charName;
 
-    if (lower.endsWith('.vrm') || lower.endsWith('.glb')) {
-        loadCharacterFromUrl(blobUrl, file.name);
-    } else if (lower.endsWith('.png') || lower.endsWith('.jpg') || lower.endsWith('.jpeg')) {
-        applyCustomSkinTexture(blobUrl, file.name);
-    } else {
-        alert('⚠️ .vrm / .glb / .png / .jpg 形式のファイルを選択してください。');
+    const badge = document.getElementById('slot-limit-badge');
+    if (badge) {
+        badge.innerText = `🔒 1/1体 登録済`;
+        badge.classList.add('locked');
+    }
+    const regLabel = document.getElementById('registered-char-label');
+    if (regLabel) {
+        regLabel.innerText = `${charName} (1/1体ロック中)`;
+        regLabel.style.color = '#ffd32a';
+    }
+    const resetBtn = document.getElementById('reset-avatar-btn');
+    if (resetBtn) resetBtn.style.display = 'inline-block';
+    const previewBtn = document.getElementById('btn-apply-preview');
+    const lockBtn = document.getElementById('btn-lock-register');
+    if (previewBtn) previewBtn.disabled = true;
+    if (lockBtn) {
+        lockBtn.innerText = `🔒 1人1体 本登録済み (${charName})`;
+        lockBtn.disabled = true;
     }
 }
 
-function loadCharacterFromUrl(url, fileName) {
-    const overlay = document.getElementById('loading-overlay');
-    const loadingText = document.getElementById('loading-text');
-    loadingText.innerText = `自作キャラ召喚中: ${fileName}...`;
-    overlay.style.display = 'flex';
-
-    const loader = new GLTFLoader();
-    loader.register(parser => new VRMLoaderPlugin(parser));
-
-    loader.load(
-        url,
-        gltf => {
-            const vrm = gltf.userData.vrm;
-            const modelRoot = vrm ? vrm.scene : gltf.scene;
-
-            if (vrm) {
-                VRMUtils.removeUnnecessaryVertices(gltf.scene);
-                VRMUtils.removeUnnecessaryJoints(gltf.scene);
-            }
-
-            if (player.vrm) {
-                player.animPivot.remove(player.vrm.scene);
-                VRMUtils.deepDispose(player.vrm.scene);
-                player.vrm = null;
-            }
-            if (player.customGlb) {
-                player.animPivot.remove(player.customGlb);
-                player.customGlb = null;
-            }
-            if (player.mesh) player.mesh.visible = false;
-
-            modelRoot.traverse(obj => {
-                if (obj.isMesh) {
-                    obj.castShadow = true;
-                    obj.receiveShadow = true;
-                }
-            });
-
-            const isOurCustomChar = fileName.includes('valkyrie_seraph') || fileName.includes('crimson_samurai') || fileName.includes('golden_brawler');
-            player.isCustomRig = isOurCustomChar;
-
-            if (vrm) {
-                player.vrm = vrm;
-                player.isVrm = true;
-                vrm.scene.rotation.y = isOurCustomChar ? 0 : Math.PI;
-                if (!isOurCustomChar && vrm.humanoid) {
-                    try {
-                        const lArm = vrm.humanoid.getNormalizedBoneNode('leftUpperArm');
-                        const rArm = vrm.humanoid.getNormalizedBoneNode('rightUpperArm');
-                        if (lArm) lArm.rotation.z = Math.PI / 3.2;
-                        if (rArm) rArm.rotation.z = -Math.PI / 3.2;
-                    } catch (err) {}
-                }
-                player.animPivot.add(vrm.scene);
-            } else {
-                player.customGlb = modelRoot;
-                player.isVrm = true;
-                player.animPivot.add(modelRoot);
-            }
-
-            player.customJoints = extractJointsFromHierarchy(modelRoot);
-
-            const metaName = vrm?.meta?.name || vrm?.meta?.title || fileName.replace(/\.(vrm|glb)$/i, '');
-            let iconSym = '🦸';
-            let skillName = '🔥 覇皇烈空閃 (EX SPECIAL) 🔥';
-            let charType = 'knight';
-            let themeColor = 0x00ffff;
-
-            if (fileName.includes('valkyrie_seraph') || metaName.includes('セラフ')) {
-                iconSym = '👼';
-                skillName = '🌟 聖裁・セラフィック・ノヴァ 🌟';
-                charType = 'seraph';
-                themeColor = 0x00f2fe;
-            } else if (fileName.includes('crimson_samurai') || metaName.includes('クロガネ')) {
-                iconSym = '👹';
-                skillName = '⚡ 秘剣・紅蓮一閃 ⚡';
-                charType = 'kuro';
-                themeColor = 0xff1e42;
-            } else if (fileName.includes('golden_brawler') || metaName.includes('レオ')) {
-                iconSym = '🦁';
-                skillName = '🔥 覇王・獅子奮迅撃 🔥';
-                charType = 'leo';
-                themeColor = 0xffb800;
-            }
-            player.charType = charType;
-            player.skillName = skillName;
-            player.themeColor = themeColor;
-
-            // 召喚時の光柱演出
-            spawnGroundSlamVFX(player.position, themeColor, 0.8);
-
-            document.getElementById('player-name').innerText = metaName;
-            document.getElementById('player-avatar-icon').innerText = iconSym;
-            document.getElementById('avatar-status-text').innerText = `✅ 自作キャラ召喚中: ${metaName} (必殺技: ${skillName})`;
-            document.getElementById('reset-avatar-btn').style.display = 'inline-block';
-            overlay.style.display = 'none';
-
-            showAnnouncement(`${metaName} 参戦！`, "#00d2d3");
-        },
-        null,
-        err => {
-            console.error(err);
-            alert('モデル読み込みエラー: ' + err.message);
-            overlay.style.display = 'none';
-        }
-    );
-}
-
-function applyCustomSkinTexture(blobUrl, fileName) {
-    const texLoader = new THREE.TextureLoader();
-    texLoader.load(blobUrl, (texture) => {
-        texture.colorSpace = THREE.SRGBColorSpace;
-        restoreDefaultPlayer();
-        if (player.mesh) {
-            player.mesh.traverse(child => {
-                if (child.isMesh && child.material && child.material.name.includes("ArmorMain")) {
-                    child.material = child.material.clone();
-                    child.material.map = texture;
-                    child.material.color.setHex(0xffffff);
-                    child.material.needsUpdate = true;
-                }
-            });
-        }
-        const skinTitle = fileName.replace(/\.(png|jpg|jpeg)$/i, '');
-        document.getElementById('player-name').innerText = `Custom: ${skinTitle}`;
-        document.getElementById('player-avatar-icon').innerText = '🎨';
-        document.getElementById('avatar-status-text').innerText = `✅ カスタム画像スキン適用中: ${fileName}`;
-        document.getElementById('reset-avatar-btn').style.display = 'inline-block';
-        spawnGroundSlamVFX(player.position, 0xffd32a, 0.8);
-        showAnnouncement("カスタム画像テクスチャ適用完了！", "#ffd32a");
-    });
-}
-
-function restoreDefaultPlayer() {
+function unlockAndResetCharacter() {
+    player.isCustomCharLocked = false;
+    player.registeredCharName = "PLAYER (自作)";
+    const badge = document.getElementById('slot-limit-badge');
+    if (badge) {
+        badge.innerText = `🟢 0/1体 (未ロック)`;
+        badge.classList.remove('locked');
+    }
+    const regLabel = document.getElementById('registered-char-label');
+    if (regLabel) {
+        regLabel.innerText = `未ロック (変更可)`;
+        regLabel.style.color = '#7bed9f';
+    }
+    document.getElementById('reset-avatar-btn').style.display = 'none';
+    const previewBtn = document.getElementById('btn-apply-preview');
+    const lockBtn = document.getElementById('btn-lock-register');
+    if (previewBtn) previewBtn.disabled = false;
+    if (lockBtn) {
+        lockBtn.innerText = `🔒 このオリキャラで確定・本登録する（1人1体限定）`;
+        lockBtn.disabled = false;
+    }
     if (player.vrm) {
         player.animPivot.remove(player.vrm.scene);
         VRMUtils.deepDispose(player.vrm.scene);
@@ -616,142 +1280,202 @@ function restoreDefaultPlayer() {
         player.customGlb = null;
     }
     player.isVrm = false;
-    player.isCustomRig = false;
-    player.customJoints = null;
-    player.charType = "knight";
-    player.themeColor = 0x00ffff;
-    player.skillName = "🔥 覇皇烈空閃 (EX SPECIAL) 🔥";
-    setupPlayerMeshFromBlender();
+    rebuildPlayerModelFromDesign();
+    resetGame();
+    showAnnouncement("登録ロックを解除し、0連勝にリセットしました", "#7bed9f");
+}
 
-    document.getElementById('player-name').innerText = "Cyber Knight";
-    document.getElementById('player-avatar-icon').innerText = '⚔️';
-    document.getElementById('avatar-status-text').innerText = "現在: Blender 5.2 アーマーナイト (custom_characters/ 内の .vrm / .png をD&D可能)";
-    document.getElementById('reset-avatar-btn').style.display = 'none';
-    showAnnouncement("デフォルトアーマーに戻しました", "#ced6e0");
+function updatePlayerSpecHud() {
+    const specEl = document.getElementById('player-spec-tag');
+    if (!specEl) return;
+    specEl.innerText = `⚔️ATK:${player.atkScale.toFixed(2)}x | 📏範囲:${player.attackRange.toFixed(1)}m | 💫ひるみ:${player.stunPower.toFixed(2)}x | ⚡攻速:${player.atkSpeed.toFixed(2)}x`;
+}
+
+function handleExternalFileImport(file) {
+    if (player.isCustomCharLocked) {
+        alert(`⚠️ オリキャラの導入は【1人1体まで】です！\n現在の登録キャラ: ${player.registeredCharName}`);
+        return;
+    }
+    const lower = file.name.toLowerCase();
+    const blobUrl = URL.createObjectURL(file);
+    if (lower.endsWith('.vrm') || lower.endsWith('.glb')) {
+        loadExternalModelFromUrl(blobUrl, file.name);
+    } else if (lower.endsWith('.png') || lower.endsWith('.jpg') || lower.endsWith('.jpeg')) {
+        const texLoader = new THREE.TextureLoader();
+        texLoader.load(blobUrl, tex => {
+            tex.colorSpace = THREE.SRGBColorSpace;
+            if (player.mesh) {
+                player.mesh.traverse(c => {
+                    if (c.isMesh && c.name !== "AnimeOutline") {
+                        c.material = c.material.clone();
+                        c.material.map = tex;
+                        c.material.needsUpdate = true;
+                    }
+                });
+            }
+            const name = file.name.replace(/\.(png|jpg|jpeg)$/i, '');
+            document.getElementById('player-name').innerText = name;
+            lockCustomCharacterSlot(name);
+            document.getElementById('creator-modal').style.display = 'none';
+            showAnnouncement(`🔒 ${name} を1人1体枠に登録しました！`, "#ffd32a");
+        });
+    }
+}
+
+function loadExternalModelFromUrl(url, fileName) {
+    if (player.isCustomCharLocked) {
+        alert(`⚠️ オリキャラの導入は【1人1体まで】です！\n現在の登録キャラ: ${player.registeredCharName}`);
+        return;
+    }
+    const overlay = document.getElementById('loading-overlay');
+    overlay.style.display = 'flex';
+    const loader = new GLTFLoader();
+    loader.register(parser => new VRMLoaderPlugin(parser));
+
+    loader.load(url, gltf => {
+        const vrm = gltf.userData.vrm;
+        const modelRoot = vrm ? vrm.scene : gltf.scene;
+        if (player.mesh) player.mesh.visible = false;
+        if (player.vrm) player.animPivot.remove(player.vrm.scene);
+        if (player.customGlb) player.animPivot.remove(player.customGlb);
+
+        modelRoot.traverse(obj => {
+            if (obj.isMesh) {
+                addAnimeOutline(obj, 0.018);
+            }
+        });
+
+        const isPreset = fileName.includes('valkyrie_seraph') || fileName.includes('crimson_samurai') || fileName.includes('golden_brawler');
+        player.isCustomRig = isPreset;
+        player.isVrm = true;
+        if (vrm) {
+            player.vrm = vrm;
+            vrm.scene.rotation.y = isPreset ? 0 : Math.PI;
+            player.animPivot.add(vrm.scene);
+        } else {
+            player.customGlb = modelRoot;
+            player.animPivot.add(modelRoot);
+        }
+
+        const metaName = vrm?.meta?.name || fileName.replace(/\.(vrm|glb)$/i, '');
+        document.getElementById('player-name').innerText = metaName;
+        lockCustomCharacterSlot(metaName);
+        overlay.style.display = 'none';
+        document.getElementById('creator-modal').style.display = 'none';
+        spawnGroundSlamVFX(player.position, player.themeColor, 1.2);
+        showAnnouncement(`🔒 ${metaName} 参戦！(1/1体ロック)`, "#00f2fe");
+    }, null, () => {
+        overlay.style.display = 'none';
+    });
 }
 
 // ========================================================
-// 5. 超ド派手 3D エフェクト (VFX) エンジン
+// 9. 多層3D技エフェクト（VFX）エンジン（属性別・技範囲連動スケール）
 // ========================================================
-function spawnDamageNumber(x, y, z, damage, type = "normal") {
+function getVfxPalette() {
+    switch (player.vfxElement) {
+        case "flame_crimson": return { main: 0xff3838, sub: 0xffbe0b, core: 0xffffff };
+        case "holy_astral":   return { main: 0xfff200, sub: 0x70a1ff, core: 0xffffff };
+        case "void_gravity":  return { main: 0x9b59b6, sub: 0x00d2d3, core: 0xf5f6fa };
+        default:              return { main: 0x00f2fe, sub: 0xffdd59, core: 0xffffff };
+    }
+}
+
+function spawnDamageNumber(x, y, z, damage, type = "normal", labelPrefix = "") {
     const layer = document.getElementById('damage-numbers-layer');
     if (!layer) return;
 
-    const pos = new THREE.Vector3(x + (Math.random() - 0.5) * 0.5, y + 1.45, z + (Math.random() - 0.5) * 0.5);
+    const pos = new THREE.Vector3(x + (Math.random() - 0.5) * 0.6, y + 1.5, z + (Math.random() - 0.5) * 0.6);
     pos.project(camera);
     const screenX = (pos.x * 0.5 + 0.5) * window.innerWidth;
     const screenY = (-(pos.y * 0.5) + 0.5) * window.innerHeight;
 
     const elem = document.createElement('div');
     elem.className = `floating-dmg ${type}`;
-    elem.innerText = damage;
+    elem.innerText = labelPrefix ? `${labelPrefix} ${damage}` : damage;
     elem.style.left = `${screenX}px`;
     elem.style.top = `${screenY}px`;
     layer.appendChild(elem);
 
     setTimeout(() => {
         if (elem.parentNode) elem.parentNode.removeChild(elem);
-    }, 850);
+    }, 780);
 }
 
-// ① 多層クレセント斬撃ブレード波 (3層発光弧 + トレイル粒子)
-function spawnCrescentSlash(origin, targetPos, colorHex = 0x00ffff, comboStep = 1) {
+/**
+ * 技範囲（player.attackRange）に比例してスケールする3重クレセント斬撃波
+ */
+function spawnCrescentSlash(origin, targetPos, colorHex, comboStep = 1, rangeScale = 1.0) {
     const vfxGroup = new THREE.Group();
-    vfxGroup.position.copy(origin).add(new THREE.Vector3(0, 1.08, 0));
-    vfxGroup.lookAt(targetPos.x, 1.08, targetPos.z);
+    vfxGroup.position.copy(origin).add(new THREE.Vector3(0, 1.1 + player.airY, 0));
+    vfxGroup.lookAt(targetPos.x, 1.1 + cpu.airY, targetPos.z);
 
-    // コンボ段数に応じた斬撃角度 (1段目: 斜め袈裟斬り, 2段目: 水平大回転斬り, 3段目: 垂直大兜割り)
-    if (comboStep === 1) {
-        vfxGroup.rotateZ(Math.PI * 0.22);
-    } else if (comboStep === 2) {
-        vfxGroup.rotateX(Math.PI * 0.48);
-    } else {
-        vfxGroup.rotateY(Math.PI * 0.5);
-        vfxGroup.rotateZ(-Math.PI * 0.1);
-    }
+    if (comboStep === 1) vfxGroup.rotateZ(Math.PI * 0.20);
+    else if (comboStep === 2) vfxGroup.rotateX(Math.PI * 0.46);
+    else vfxGroup.rotateY(Math.PI * 0.48);
 
-    const arcRadius = comboStep === 3 ? 1.55 : (comboStep === 2 ? 1.45 : 1.15);
-    const arcSpan = comboStep === 2 ? Math.PI * 1.75 : Math.PI * 1.15;
+    const arcRadius = (comboStep === 3 ? 1.55 : 1.25) * rangeScale;
+    const arcSpan = comboStep === 2 ? Math.PI * 1.7 : Math.PI * 1.2;
 
-    // 外側オーラブレード
-    const outerGeo = new THREE.RingGeometry(arcRadius * 0.55, arcRadius, 32, 2, 0, arcSpan);
+    const outerGeo = new THREE.RingGeometry(arcRadius * 0.52, arcRadius, 28, 1, 0, arcSpan);
     const outerMat = new THREE.MeshBasicMaterial({ color: colorHex, side: THREE.DoubleSide, transparent: true, opacity: 0.92 });
     const outerMesh = new THREE.Mesh(outerGeo, outerMat);
-    vfxGroup.add(outerMesh);
 
-    // 内側白熱コアブレード (Bloomで強く輝く)
-    const coreGeo = new THREE.RingGeometry(arcRadius * 0.78, arcRadius * 0.96, 32, 1, 0, arcSpan * 0.9);
+    const coreGeo = new THREE.RingGeometry(arcRadius * 0.76, arcRadius * 0.95, 28, 1, 0, arcSpan * 0.9);
     const coreMat = new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.DoubleSide, transparent: true, opacity: 1.0 });
     const coreMesh = new THREE.Mesh(coreGeo, coreMat);
     coreMesh.position.z = 0.01;
-    vfxGroup.add(coreMesh);
 
-    // 立体感のための直交チューブリング
-    const torusGeo = new THREE.TorusGeometry(arcRadius * 0.88, 0.045, 8, 28, arcSpan);
-    const torusMat = new THREE.MeshBasicMaterial({ color: colorHex, transparent: true, opacity: 0.88 });
-    const torusMesh = new THREE.Mesh(torusGeo, torusMat);
-    vfxGroup.add(torusMesh);
-
+    vfxGroup.add(outerMesh, coreMesh);
     scene.add(vfxGroup);
 
     const forwardDir = new THREE.Vector3().subVectors(targetPos, origin).setY(0).normalize();
-    const maxLife = comboStep === 3 ? 0.34 : 0.24;
-
     effectsList.push({
         mesh: vfxGroup,
-        life: maxLife,
-        maxLife: maxLife,
+        life: 0.25,
+        maxLife: 0.25,
         update: (dt, item) => {
-            const ratio = item.life / item.maxLife;
-            item.mesh.position.addScaledVector(forwardDir, dt * (comboStep === 2 ? 2.5 : 6.5));
-            item.mesh.scale.multiplyScalar(1.0 + dt * 3.8);
-            outerMesh.rotation.z += dt * 14.0;
-            coreMesh.rotation.z += dt * 14.0;
-            torusMesh.rotation.z += dt * 14.0;
-            outerMat.opacity = ratio * 0.92;
-            coreMat.opacity = ratio;
-            torusMat.opacity = ratio * 0.85;
+            const r = item.life / item.maxLife;
+            item.mesh.position.addScaledVector(forwardDir, dt * 6.5);
+            item.mesh.scale.multiplyScalar(1.0 + dt * 3.5);
+            outerMesh.rotation.z += dt * 14;
+            coreMesh.rotation.z += dt * 14;
+            outerMat.opacity = r * 0.9;
+            coreMat.opacity = r;
         }
     });
 }
 
-// ② 物理飛散ヒットスパーク＆インパクトフラッシュ (45個の伸びる火花粒子)
-function spawnHitSparks(hitPos, colorHex = 0xffd32a, count = 42) {
+/**
+ * 攻撃ヒット時のアニメ調サンバースト閃光 ＆ 物理火花スパーク (画像2下段のインパクト閃光再現)
+ */
+function spawnHitSparks(hitPos, colorHex = 0xffbe0b, count = 36) {
     const container = new THREE.Group();
-    container.position.copy(hitPos).add(new THREE.Vector3(0, 1.05, 0));
+    container.position.copy(hitPos).add(new THREE.Vector3(0, 1.15 + cpu.airY, 0));
     scene.add(container);
 
-    // 中心インパクトフラッシュ球 + ショックリング
     const flashMesh = new THREE.Mesh(
-        new THREE.SphereGeometry(0.45, 16, 16),
+        new THREE.OctahedronGeometry(0.65, 1),
         new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 1.0 })
     );
     const ringMesh = new THREE.Mesh(
-        new THREE.RingGeometry(0.3, 0.55, 24),
+        new THREE.RingGeometry(0.4, 0.95, 16),
         new THREE.MeshBasicMaterial({ color: colorHex, side: THREE.DoubleSide, transparent: true, opacity: 1.0 })
     );
     ringMesh.lookAt(camera.position);
-    container.add(flashMesh);
-    container.add(ringMesh);
+    container.add(flashMesh, ringMesh);
 
-    // 飛び散る火花ストリーク
     const sparks = [];
-    const sparkGeo = new THREE.ConeGeometry(0.035, 0.38, 6);
+    const sparkGeo = new THREE.ConeGeometry(0.045, 0.45, 5);
     sparkGeo.rotateX(Math.PI / 2);
 
     for (let i = 0; i < count; i++) {
-        const isWhite = i % 3 === 0;
-        const mat = new THREE.MeshBasicMaterial({ color: isWhite ? 0xffffff : colorHex, transparent: true, opacity: 1.0 });
+        const mat = new THREE.MeshBasicMaterial({ color: i % 2 === 0 ? 0xffffff : colorHex, transparent: true, opacity: 1.0 });
         const sp = new THREE.Mesh(sparkGeo, mat);
-
         const theta = Math.random() * Math.PI * 2;
-        const phi = (Math.random() - 0.3) * Math.PI;
-        const speed = 5.5 + Math.random() * 10.5;
-        const vel = new THREE.Vector3(
-            Math.cos(phi) * Math.cos(theta) * speed,
-            Math.sin(phi) * speed + 3.0,
-            Math.cos(phi) * Math.sin(theta) * speed
-        );
+        const phi = (Math.random() - 0.25) * Math.PI;
+        const spd = 6.0 + Math.random() * 11.0;
+        const vel = new THREE.Vector3(Math.cos(phi) * Math.cos(theta) * spd, Math.sin(phi) * spd + 2.5, Math.cos(phi) * Math.sin(theta) * spd);
         sp.lookAt(vel);
         container.add(sp);
         sparks.push({ mesh: sp, vel, mat });
@@ -759,405 +1483,278 @@ function spawnHitSparks(hitPos, colorHex = 0xffd32a, count = 42) {
 
     effectsList.push({
         mesh: container,
-        life: 0.42,
-        maxLife: 0.42,
+        life: 0.34,
+        maxLife: 0.34,
         update: (dt, item) => {
             const ratio = item.life / item.maxLife;
-            flashMesh.scale.multiplyScalar(1.18);
-            flashMesh.material.opacity = Math.max(0, (ratio - 0.6) * 2.5);
-
-            ringMesh.scale.multiplyScalar(1.22);
+            flashMesh.scale.multiplyScalar(1.0 + dt * 6.0);
+            flashMesh.material.opacity = Math.max(0, (ratio - 0.4) * 1.6);
+            ringMesh.scale.multiplyScalar(1.0 + dt * 11.0);
             ringMesh.material.opacity = ratio;
-            ringMesh.lookAt(camera.position);
-
             sparks.forEach(s => {
-                s.vel.y -= 22.0 * dt; // 重力
+                s.vel.y -= 24.0 * dt;
                 s.mesh.position.addScaledVector(s.vel, dt);
-                // 地面でバウンド
-                if (s.mesh.position.y < -1.0) {
-                    s.mesh.position.y = -1.0;
-                    s.vel.y *= -0.5;
-                }
-                s.mesh.lookAt(s.mesh.position.clone().add(s.vel));
                 s.mat.opacity = ratio;
             });
         }
     });
 }
 
-// ③ 地面叩きつけクレーター衝撃波 ＆ 飛散岩石デブリ ＆ 昇天光柱
-function spawnGroundSlamVFX(pos, colorHex = 0xff4757, scale = 1.0) {
+function spawnGroundSlamVFX(pos, colorHex = 0xffbe0b, scale = 1.0) {
     const group = new THREE.Group();
-    group.position.set(pos.x, 0.04, pos.z);
+    group.position.set(pos.x, 0.05, pos.z);
     scene.add(group);
 
-    // 地面を走る2重の衝撃波リング
-    const shockMat = new THREE.MeshBasicMaterial({ color: colorHex, side: THREE.DoubleSide, transparent: true, opacity: 0.95 });
-    const shockRing = new THREE.Mesh(new THREE.RingGeometry(0.4 * scale, 1.2 * scale, 36), shockMat);
-    shockRing.rotation.x = -Math.PI / 2;
-    group.add(shockRing);
+    const waveMat = new THREE.MeshBasicMaterial({ color: colorHex, side: THREE.DoubleSide, transparent: true, opacity: 0.9 });
+    const wave = new THREE.Mesh(new THREE.RingGeometry(0.3 * scale, 0.85 * scale, 32), waveMat);
+    wave.rotation.x = -Math.PI / 2;
 
-    // 立ち昇る光の柱 (Light Pillar)
-    const pillarMat = new THREE.MeshBasicMaterial({ color: colorHex, transparent: true, opacity: 0.65, side: THREE.DoubleSide });
-    const pillar = new THREE.Mesh(new THREE.CylinderGeometry(0.65 * scale, 0.95 * scale, 4.5 * scale, 24, 1, true), pillarMat);
-    pillar.position.y = 2.25 * scale;
-    group.add(pillar);
+    const pillarMat = new THREE.MeshBasicMaterial({ color: colorHex, transparent: true, opacity: 0.75 });
+    const pillar = new THREE.Mesh(new THREE.CylinderGeometry(0.55 * scale, 0.9 * scale, 5.5 * scale, 16, 1, true), pillarMat);
+    pillar.position.y = 2.75 * scale;
 
-    // 飛び散る岩石デブリ (12個)
-    const rocks = [];
-    const rockGeo = new THREE.DodecahedronGeometry(0.14 * scale, 0);
-    const rockMat = new THREE.MeshStandardMaterial({ color: 0x8a795d, roughness: 0.8 });
-    for (let i = 0; i < 12; i++) {
-        const ang = (i / 12) * Math.PI * 2 + Math.random() * 0.3;
-        const rMesh = new THREE.Mesh(rockGeo, rockMat);
-        rMesh.position.set(Math.cos(ang) * 0.6, 0.1, Math.sin(ang) * 0.6);
-        group.add(rMesh);
-        rocks.push({
-            mesh: rMesh,
-            vel: new THREE.Vector3(Math.cos(ang) * (4 + Math.random() * 4), 5 + Math.random() * 5, Math.sin(ang) * (4 + Math.random() * 4)),
-            rotVel: new THREE.Vector3(Math.random() * 8, Math.random() * 8, Math.random() * 8)
-        });
-    }
+    group.add(wave, pillar);
 
     effectsList.push({
         mesh: group,
-        life: 0.65,
-        maxLife: 0.65,
+        life: 0.45,
+        maxLife: 0.45,
         update: (dt, item) => {
             const ratio = item.life / item.maxLife;
-            shockRing.scale.addScalar(dt * 9.5 * scale);
-            shockMat.opacity = ratio;
-
-            pillar.scale.x = 1.0 + (1.0 - ratio) * 1.2;
-            pillar.scale.z = 1.0 + (1.0 - ratio) * 1.2;
-            pillar.scale.y = 1.0 + (1.0 - ratio) * 0.6;
-            pillarMat.opacity = ratio * 0.65;
-
-            rocks.forEach(rk => {
-                rk.vel.y -= 20.0 * dt;
-                rk.mesh.position.addScaledVector(rk.vel, dt);
-                if (rk.mesh.position.y < 0.05) {
-                    rk.mesh.position.y = 0.05;
-                    rk.vel.y *= -0.4;
-                }
-                rk.mesh.rotation.x += rk.rotVel.x * dt;
-                rk.mesh.rotation.y += rk.rotVel.y * dt;
-                rk.mesh.scale.setScalar(ratio);
-            });
+            wave.scale.addScalar(dt * 12.0 * scale);
+            waveMat.opacity = ratio;
+            pillar.scale.x = 1.0 + (1.0 - ratio) * 1.4;
+            pillar.scale.z = 1.0 + (1.0 - ratio) * 1.4;
+            pillarMat.opacity = ratio * 0.75;
         }
     });
 }
 
-// ④ ステップ回避＆神速移動用のホログラム残像 (Afterimage Ghost)
-function spawnAfterimageGhost(entity, colorHex = 0x00ffff) {
-    const ghostGroup = new THREE.Group();
-    ghostGroup.position.copy(entity.position);
-    ghostGroup.rotation.y = entity.group.rotation.y;
-
-    const ghostMat = new THREE.MeshBasicMaterial({
-        color: colorHex,
-        wireframe: true,
-        transparent: true,
-        opacity: 0.65
-    });
-
-    const bodyClone = new THREE.Mesh(new THREE.CapsuleGeometry(0.28, 0.9, 6, 12), ghostMat);
-    bodyClone.position.y = 0.95;
-    ghostGroup.add(bodyClone);
-    scene.add(ghostGroup);
-
-    effectsList.push({
-        mesh: ghostGroup,
-        life: 0.35,
-        maxLife: 0.35,
-        update: (dt, item) => {
-            ghostMat.opacity = (item.life / item.maxLife) * 0.65;
-            item.mesh.scale.multiplyScalar(1.0 + dt * 0.5);
-        }
-    });
-}
-
-// ⑤ 走行時の足元砂煙ダスト (Footstep Dust Puff)
-function spawnFootstepDust(pos) {
-    const dustMat = new THREE.MeshBasicMaterial({ color: 0xd2c49e, transparent: true, opacity: 0.5 });
-    const dust = new THREE.Mesh(new THREE.DodecahedronGeometry(0.12, 0), dustMat);
-    dust.position.set(pos.x + (Math.random() - 0.5) * 0.3, 0.1, pos.z + (Math.random() - 0.5) * 0.3);
+function spawnFootstepDust(pos, scale = 1.0) {
+    const dustMat = new THREE.MeshBasicMaterial({ color: 0xd8c395, transparent: true, opacity: 0.55 });
+    const dust = new THREE.Mesh(new THREE.DodecahedronGeometry(0.16 * scale, 0), dustMat);
+    dust.position.set(pos.x + (Math.random() - 0.5) * 0.4, 0.12, pos.z + (Math.random() - 0.5) * 0.4);
     scene.add(dust);
 
     effectsList.push({
         mesh: dust,
-        life: 0.35,
-        maxLife: 0.35,
+        life: 0.38,
+        maxLife: 0.38,
         update: (dt, item) => {
-            item.mesh.position.y += dt * 0.9;
-            item.mesh.scale.addScalar(dt * 2.5);
-            dustMat.opacity = (item.life / item.maxLife) * 0.45;
+            item.mesh.position.y += dt * 1.1;
+            item.mesh.scale.addScalar(dt * 3.0);
+            dustMat.opacity = (item.life / item.maxLife) * 0.5;
         }
     });
 }
 
-// ⑥ キャラクター別の固有必殺技 (EX Special) 3D VFX!
-function spawnCharacterUltimateVFX(charType, attackerPos, targetPos, colorHex) {
-    if (charType === "seraph") {
-        // 👼 セラフ: 上空から18本の「蒼き聖光の槍 (Rain of Holy Spears)」が豪雨のように降り注ぎ、巨大聖光クロス柱が昇る！
-        const group = new THREE.Group();
-        scene.add(group);
-        const spears = [];
-        const spearGeo = new THREE.ConeGeometry(0.12, 2.6, 8);
-        spearGeo.rotateX(Math.PI); // 下向き
+function spawnAfterimageGhost(entity, colorHex = 0x00f2fe) {
+    const ghostMat = new THREE.MeshBasicMaterial({ color: colorHex, wireframe: true, transparent: true, opacity: 0.6 });
+    const g = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.25, 1.35, 10), ghostMat);
+    g.position.copy(entity.position).add(new THREE.Vector3(0, 0.9 + entity.airY, 0));
+    scene.add(g);
 
-        for (let i = 0; i < 18; i++) {
-            const mat = new THREE.MeshBasicMaterial({ color: i % 2 === 0 ? 0x00ffff : 0xffffff, transparent: true, opacity: 0.95 });
-            const sp = new THREE.Mesh(spearGeo, mat);
-            const offsetR = Math.random() * 2.8;
-            const offsetAng = Math.random() * Math.PI * 2;
-            sp.position.set(
-                targetPos.x + Math.cos(offsetAng) * offsetR,
-                6.0 + i * 0.45,
-                targetPos.z + Math.sin(offsetAng) * offsetR
-            );
-            group.add(sp);
-            spears.push({ mesh: sp, mat, impacted: false });
+    effectsList.push({
+        mesh: g,
+        life: 0.32,
+        maxLife: 0.32,
+        update: (dt, item) => {
+            ghostMat.opacity = (item.life / item.maxLife) * 0.6;
         }
-
-        effectsList.push({
-            mesh: group,
-            life: 1.1,
-            maxLife: 1.1,
-            update: (dt, item) => {
-                const ratio = item.life / item.maxLife;
-                spears.forEach(s => {
-                    if (s.mesh.position.y > 0.8) {
-                        s.mesh.position.y -= dt * 28.0;
-                    } else if (!s.impacted) {
-                        s.impacted = true;
-                        spawnHitSparks(new THREE.Vector3(s.mesh.position.x, 0, s.mesh.position.z), 0x00ffff, 12);
-                    }
-                    s.mat.opacity = ratio;
-                });
-            }
-        });
-        spawnGroundSlamVFX(targetPos, 0x00ffff, 1.8);
-
-    } else if (charType === "kuro") {
-        // 👹 クロガネ: 空間を切り裂く14本の「真紅の次元斬レーザードーム (Dimensional Crimson Slashes)」！
-        const group = new THREE.Group();
-        group.position.copy(targetPos).add(new THREE.Vector3(0, 1.2, 0));
-        scene.add(group);
-
-        const lines = [];
-        const slashBeamGeo = new THREE.CylinderGeometry(0.04, 0.04, 5.2, 8);
-        for (let i = 0; i < 14; i++) {
-            const mat = new THREE.MeshBasicMaterial({ color: i % 3 === 0 ? 0xffffff : 0xff1e42, transparent: true, opacity: 1.0 });
-            const beam = new THREE.Mesh(slashBeamGeo, mat);
-            beam.position.set((Math.random() - 0.5) * 1.8, (Math.random() - 0.5) * 1.4, (Math.random() - 0.5) * 1.8);
-            beam.rotation.set(Math.random() * Math.PI, Math.random() * Math.PI, Math.random() * Math.PI);
-            group.add(beam);
-            lines.push({ mesh: beam, mat });
-        }
-
-        const domeMat = new THREE.MeshBasicMaterial({ color: 0xff0033, wireframe: true, transparent: true, opacity: 0.9 });
-        const dome = new THREE.Mesh(new THREE.IcosahedronGeometry(2.2, 2), domeMat);
-        group.add(dome);
-
-        effectsList.push({
-            mesh: group,
-            life: 0.85,
-            maxLife: 0.85,
-            update: (dt, item) => {
-                const ratio = item.life / item.maxLife;
-                dome.rotation.y += dt * 8.0;
-                dome.scale.multiplyScalar(1.0 + dt * 1.8);
-                domeMat.opacity = ratio;
-                lines.forEach(l => {
-                    l.mesh.scale.x = ratio * 1.5;
-                    l.mesh.scale.z = ratio * 1.5;
-                    l.mat.opacity = ratio;
-                });
-            }
-        });
-        spawnGroundSlamVFX(targetPos, 0xff1e42, 1.6);
-
-    } else if (charType === "leo") {
-        // 🦁 レオ: 覇王の赤黒落雷8連 + 超巨大「黄金メテオ拳塊」落下クラッシュ！
-        const group = new THREE.Group();
-        scene.add(group);
-
-        // 巨大黄金メテオ球
-        const meteorMat = new THREE.MeshBasicMaterial({ color: 0xffb800, wireframe: true, transparent: true, opacity: 1.0 });
-        const meteor = new THREE.Mesh(new THREE.DodecahedronGeometry(1.8, 1), meteorMat);
-        meteor.position.set(targetPos.x, 5.5, targetPos.z);
-        group.add(meteor);
-
-        // 赤黒い覇王の稲妻柱 (8本)
-        const bolts = [];
-        for (let i = 0; i < 8; i++) {
-            const ang = (i / 8) * Math.PI * 2;
-            const bMat = new THREE.MeshBasicMaterial({ color: i % 2 === 0 ? 0xff1133 : 0xffcc00, transparent: true, opacity: 1.0 });
-            const bolt = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.18, 9.0, 6), bMat);
-            bolt.position.set(targetPos.x + Math.cos(ang) * 1.8, 4.5, targetPos.z + Math.sin(ang) * 1.8);
-            bolt.rotation.z = (Math.random() - 0.5) * 0.25;
-            group.add(bolt);
-            bolts.push({ mesh: bolt, mat: bMat });
-        }
-
-        effectsList.push({
-            mesh: group,
-            life: 0.9,
-            maxLife: 0.9,
-            update: (dt, item) => {
-                const ratio = item.life / item.maxLife;
-                if (meteor.position.y > 1.2) {
-                    meteor.position.y -= dt * 18.0;
-                } else {
-                    meteor.scale.multiplyScalar(1.0 + dt * 3.5);
-                }
-                meteor.rotation.x += dt * 10;
-                meteor.rotation.y += dt * 10;
-                meteorMat.opacity = ratio;
-                bolts.forEach(b => {
-                    b.mat.opacity = (Math.random() > 0.2 ? ratio : 0.2);
-                });
-            }
-        });
-        spawnGroundSlamVFX(targetPos, 0xffaa00, 2.0);
-
-    } else {
-        // ⚔️ サイバーナイト: 極太プラズマ・バスターレーザー照射 & 5連スパイラルリング！
-        const group = new THREE.Group();
-        group.position.copy(attackerPos).add(new THREE.Vector3(0, 1.15, 0));
-        group.lookAt(targetPos.x, 1.15, targetPos.z);
-        scene.add(group);
-
-        const beamLen = 14.0;
-        const beamMat = new THREE.MeshBasicMaterial({ color: 0x00ffff, transparent: true, opacity: 0.95 });
-        const beam = new THREE.Mesh(new THREE.CylinderGeometry(0.45, 0.45, beamLen, 16), beamMat);
-        beam.rotation.x = Math.PI / 2;
-        beam.position.z = beamLen / 2;
-        group.add(beam);
-
-        const coreMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 1.0 });
-        const core = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, beamLen, 12), coreMat);
-        core.rotation.x = Math.PI / 2;
-        core.position.z = beamLen / 2;
-        group.add(core);
-
-        const rings = [];
-        for (let i = 0; i < 6; i++) {
-            const rMat = new THREE.MeshBasicMaterial({ color: 0x00ffff, side: THREE.DoubleSide, transparent: true, opacity: 0.9 });
-            const rMesh = new THREE.Mesh(new THREE.RingGeometry(0.6, 1.1, 24), rMat);
-            rMesh.position.z = 1.0 + i * 2.0;
-            group.add(rMesh);
-            rings.push({ mesh: rMesh, mat: rMat });
-        }
-
-        effectsList.push({
-            mesh: group,
-            life: 0.75,
-            maxLife: 0.75,
-            update: (dt, item) => {
-                const ratio = item.life / item.maxLife;
-                beam.scale.x = ratio * 1.4;
-                beam.scale.z = ratio * 1.4;
-                beamMat.opacity = ratio;
-                coreMat.opacity = ratio;
-                rings.forEach(r => {
-                    r.mesh.scale.addScalar(dt * 4.5);
-                    r.mesh.rotation.z += dt * 12.0;
-                    r.mat.opacity = ratio;
-                });
-            }
-        });
-        spawnGroundSlamVFX(targetPos, 0x00ffff, 1.6);
-    }
+    });
 }
 
+// ========================================================
+// 10. ひるみ（Hit-Stun）＆ 打ち上げ ＆ 連続コンボチェインシステム
+// ========================================================
 function addCombo(hits, damage) {
     comboHits += hits;
     comboDamage += damage;
-    const disp = document.getElementById('combo-display');
-    document.getElementById('combo-hits-num').innerText = comboHits;
-    document.getElementById('combo-damage-num').innerText = comboDamage;
-    disp.classList.add('active');
 
-    if (comboTimer) clearTimeout(comboTimer);
-    comboTimer = setTimeout(() => {
-        disp.classList.remove('active');
+    const rightDisp = document.getElementById('combo-display');
+    const leftDisp = document.getElementById('combo-display-left');
+    document.getElementById('combo-hits-num').innerText = comboHits;
+    document.getElementById('combo-hits-left').innerText = comboHits;
+    document.getElementById('combo-damage-num').innerText = comboDamage;
+
+    rightDisp.classList.add('active');
+    leftDisp.classList.add('active');
+
+    if (comboResetTimer) clearTimeout(comboResetTimer);
+    comboResetTimer = setTimeout(() => {
+        rightDisp.classList.remove('active');
+        leftDisp.classList.remove('active');
         comboHits = 0;
         comboDamage = 0;
-    }, 2200);
+    }, 2400);
 }
 
-// ========================================================
-// 6. プレイヤー戦闘アクション (3段固有モーション + 必殺技 + 回避残像)
-// ========================================================
-function performPlayerAttack() {
+/**
+ * プレイヤーの通常攻撃 3系統（⚡連撃 rush / ⚔️広範囲斬撃 wide / 🗡️打ち上げ強攻撃 launch）
+ */
+function performPlayerAttack(subType = "rush") {
     if (!isGameActive) return;
-    if (player.state === "special" || player.state === "guard" || player.state === "dodge" || player.state === "down") return;
+    if (player.state === "special" || player.state === "down") return;
 
-    // 攻撃中の連打でスムーズに次のコンボへチェイン可能
-    if (player.state === "attack" && player.stateTimer > 0.14) return;
+    // 攻撃速度パラメータ（player.atkSpeed）に応じてコンボキャンセル受付が速くなる！
+    const cancelWindow = 0.16 / player.atkSpeed;
+    if ((player.state === "attack" || player.state === "skill") && player.stateTimer > cancelWindow) return;
 
-    player.comboStep = (player.comboStep % 3) + 1;
+    player.attackSubType = subType;
+    player.comboStep = (player.comboStep % 4) + 1;
     player.state = "attack";
-    player.stateDuration = player.comboStep === 3 ? 0.52 : (player.comboStep === 2 ? 0.40 : 0.32);
+
+    const baseDur = subType === "launch" ? 0.46 : (subType === "wide" ? 0.38 : 0.28);
+    player.stateDuration = baseDur / player.atkSpeed;
     player.stateTimer = player.stateDuration;
 
     const toCpu = new THREE.Vector3().subVectors(cpu.position, player.position);
     const dist = toCpu.length();
-
     player.rotationY = Math.atan2(toCpu.x, toCpu.z);
-    const lungeSpeed = player.comboStep === 3 ? 7.5 : 5.5;
-    player.velocity.copy(toCpu.clone().normalize().multiplyScalar(lungeSpeed));
 
-    // 多層クレセント斬撃波の生成
-    const slashColor = player.comboStep === 3 ? 0xffd32a : player.themeColor;
-    spawnCrescentSlash(player.position, cpu.position, slashColor, player.comboStep);
+    // 踏み込み移動と足元砂煙
+    const lunge = subType === "launch" ? 7.5 : (subType === "wide" ? 6.0 : 5.0);
+    player.velocity.copy(toCpu.clone().normalize().multiplyScalar(lunge));
+    spawnFootstepDust(player.position, 1.5);
 
-    // 3段目（ジャンピング兜割り）は着地タイミングで地面クラッシュ衝撃波も発生！
-    if (player.comboStep === 3) {
-        setTimeout(() => {
-            const slamPos = player.position.clone().add(new THREE.Vector3(Math.sin(player.rotationY) * 1.4, 0, Math.cos(player.rotationY) * 1.4));
-            spawnGroundSlamVFX(slamPos, player.themeColor, 1.15);
-        }, 240);
+    const pal = getVfxPalette();
+    const rangeRatio = player.attackRange / 3.1;
+
+    // 魔導シューター型の場合は遠距離魔弾を発射（画像2右上の魔法使いバトル再現）
+    if (player.motionType === "magic_shooter") {
+        spawnMagicProjectile(player.position, toCpu.clone().normalize(), pal.main, subType);
     }
 
-    // ヒット判定
-    if (dist < 3.1) {
-        let baseDmg = player.comboStep === 1 ? 48 : (player.comboStep === 2 ? 72 : 140);
-        let isCrit = player.comboStep === 3;
+    spawnCrescentSlash(player.position, cpu.position, subType === "launch" ? pal.sub : pal.main, player.comboStep, rangeRatio);
 
-        cameraShakeIntensity = isCrit ? 0.45 : 0.18;
-        hitStopTimer = isCrit ? 0.08 : 0.035; // 気持ちいいヒットストップ！
+    // 実効リーチ判定（wideは1.15倍、launchは1.05倍）
+    const effectiveRange = player.attackRange * (subType === "wide" ? 1.15 : (subType === "launch" ? 1.05 : 1.0));
+    if (dist <= effectiveRange) {
+        const rawDmg = subType === "launch" ? 95 : (subType === "wide" ? 68 : 46);
+        const isFinisher = player.comboStep === 4 || subType === "launch";
+        let finalDmg = Math.round(rawDmg * player.atkScale * (1 + comboHits * 0.03));
 
-        // 火花スパーク飛散
-        spawnHitSparks(cpu.position, isCrit ? 0xffd32a : player.themeColor, isCrit ? 55 : 32);
+        // ガード崩し＆ひるみ（Hit-Stun）計算
+        const poiseDamage = (subType === "launch" ? 48 : (subType === "wide" ? 30 : 22)) * player.stunPower;
+        cpu.poise = Math.max(0, cpu.poise - poiseDamage);
 
-        if (cpu.isGuarding) {
-            baseDmg = Math.floor(baseDmg * 0.15);
-            spawnDamageNumber(cpu.position.x, cpu.position.y, cpu.position.z, baseDmg, "guard");
+        if (cpu.isGuarding && subType !== "launch" && cpu.poise > 0) {
+            finalDmg = Math.floor(finalDmg * 0.2);
+            spawnHitSparks(cpu.position, 0x70a1ff, 18);
+            spawnDamageNumber(cpu.position.x, cpu.position.y + cpu.airY, cpu.position.z, finalDmg, "guard", "GUARD");
         } else {
-            spawnDamageNumber(cpu.position.x, cpu.position.y, cpu.position.z, baseDmg, isCrit ? "crit" : "normal");
-            const knockForce = isCrit ? 10.5 : 3.8;
-            cpu.velocity.add(toCpu.normalize().multiplyScalar(knockForce));
-            cpu.state = isCrit ? "down" : "damaged";
-            cpu.stateDuration = isCrit ? 0.85 : 0.32;
-            cpu.stateTimer = cpu.stateDuration;
+            // ガードクラッシュ or クリーンヒット ➔ 敵が「ひるむ（Hit-Stun）」！
+            cpu.isGuarding = false;
+            const stunDuration = (subType === "launch" ? 0.85 : 0.52) * player.stunPower;
+            cpu.stunTimer = stunDuration;
+            cpu.aiTimer = Math.max(cpu.aiTimer, stunDuration + 0.15);
+
+            if (subType === "launch" || (player.comboStep === 4 && player.airY <= 0.1)) {
+                // 🗡️ 打ち上げ（Air Launch）または空中コンボ！
+                cpu.state = "launched";
+                cpu.stateDuration = stunDuration;
+                cpu.stateTimer = stunDuration;
+                cpu.airVelY = 7.8;
+                cpu.velocity.add(toCpu.clone().normalize().multiplyScalar(3.5));
+                spawnGroundSlamVFX(cpu.position, pal.sub, 1.1);
+                spawnDamageNumber(cpu.position.x, cpu.position.y + cpu.airY, cpu.position.z, finalDmg, "crit", "LAUNCH!");
+            } else {
+                // ⚡ のけぞりひるみ（Flinch / Stun）で敵の攻撃を中断させコンボ継続！
+                cpu.state = "stunned";
+                cpu.stateDuration = stunDuration;
+                cpu.stateTimer = stunDuration;
+                if (cpu.airY > 0.1) {
+                    cpu.airVelY = Math.max(cpu.airVelY, 2.8); // 空中お手玉（Juggle）維持！
+                }
+                cpu.velocity.add(toCpu.clone().normalize().multiplyScalar(2.4));
+                spawnDamageNumber(cpu.position.x, cpu.position.y + cpu.airY, cpu.position.z, finalDmg, isFinisher ? "crit" : "stun", comboHits >= 2 ? "STUN!" : "");
+            }
+
+            cameraShakeIntensity = isFinisher ? 0.38 : 0.16;
+            hitStopTimer = isFinisher ? 0.065 : 0.03;
+            spawnHitSparks(cpu.position, pal.sub, isFinisher ? 48 : 30);
         }
 
-        applyDamage('cpu', baseDmg);
-        addCombo(1, baseDmg);
-
-        player.sp = Math.min(player.maxSp, player.sp + 12);
+        applyDamage('cpu', finalDmg);
+        addCombo(1, finalDmg);
+        player.sp = Math.min(player.maxSp, player.sp + 10);
         updateGauges();
     }
 }
 
-// プレイヤー必殺技（キャラ固有シネマティック演出 + 超ド派手VFX）
+/**
+ * 魔導シューター型・遠距離ホーミング魔弾 (画像2右上の魔法使いレーザー＆魔弾)
+ */
+function spawnMagicProjectile(startPos, dir, colorHex, subType) {
+    const orbGeo = new THREE.OctahedronGeometry(subType === "launch" ? 0.38 : 0.24, 1);
+    const orbMat = new THREE.MeshBasicMaterial({ color: colorHex });
+    const mesh = new THREE.Mesh(orbGeo, orbMat);
+    mesh.position.copy(startPos).add(new THREE.Vector3(0, 1.2 + player.airY, 0));
+    scene.add(mesh);
+
+    projectilesList.push({
+        mesh,
+        vel: dir.clone().multiplyScalar(18.0),
+        life: 0.75,
+        colorHex,
+        subType
+    });
+}
+
+/**
+ * 🔥 固有スキル技 (SKILLボタン / O・Fキー / SP 20消費)
+ * 通常攻撃からキャンセルして繋がる3連ヒット属性スキル！
+ */
+function performSkillArts() {
+    if (!isGameActive) return;
+    if (player.sp < 20) {
+        showAnnouncement("SP 20% 必要です！", "#ff4757");
+        return;
+    }
+    if (player.state === "special" || player.state === "down") return;
+
+    player.sp -= 20;
+    player.state = "skill";
+    player.stateDuration = 0.62 / player.atkSpeed;
+    player.stateTimer = player.stateDuration;
+
+    const toCpu = new THREE.Vector3().subVectors(cpu.position, player.position);
+    const dist = toCpu.length();
+    player.rotationY = Math.atan2(toCpu.x, toCpu.z);
+    player.velocity.copy(toCpu.clone().normalize().multiplyScalar(10.5));
+
+    const pal = getVfxPalette();
+    spawnGroundSlamVFX(player.position, pal.main, 1.2);
+    spawnCrescentSlash(player.position, cpu.position, pal.main, 2, (player.attackRange / 3.1) * 1.35);
+
+    if (dist <= player.attackRange * 1.45) {
+        // 3連続ヒット属性バースト！
+        for (let i = 0; i < 3; i++) {
+            setTimeout(() => {
+                if (!isGameActive) return;
+                const hitDmg = Math.round(52 * player.atkScale);
+                cpu.state = "stunned";
+                cpu.stunTimer = 0.65 * player.stunPower;
+                cpu.stateTimer = cpu.stunTimer;
+                if (i === 2) cpu.airVelY = 5.5;
+                spawnHitSparks(cpu.position, i % 2 === 0 ? pal.main : pal.sub, 32);
+                spawnDamageNumber(cpu.position.x, cpu.position.y + cpu.airY, cpu.position.z, hitDmg, "crit", "SKILL!");
+                applyDamage('cpu', hitDmg);
+                addCombo(1, hitDmg);
+                cameraShakeIntensity = 0.28;
+            }, i * 110);
+        }
+    }
+    updateGauges();
+}
+
+/**
+ * 🌟 必殺奥義 EX (SP 50消費)
+ */
 function performPlayerSpecial() {
     if (!isGameActive) return;
     if (player.sp < 50) {
-        showAnnouncement("SP 不足！ (必要SP: 50)", "#ff4757");
+        showAnnouncement("SP 50% 必要です！", "#ff4757");
         return;
     }
     if (player.state === "special" || player.state === "down") return;
@@ -1166,98 +1763,94 @@ function performPlayerSpecial() {
     updateGauges();
 
     player.state = "special";
-    player.stateDuration = 1.35;
-    player.stateTimer = 1.35;
+    player.stateDuration = 1.25;
+    player.stateTimer = 1.25;
     player.isInvincible = true;
     player.velocity.set(0, 0, 0);
 
     const toCpu = new THREE.Vector3().subVectors(cpu.position, player.position);
     player.rotationY = Math.atan2(toCpu.x, toCpu.z);
 
-    // 発動オーラバースト
-    spawnGroundSlamVFX(player.position, player.themeColor, 1.1);
+    const pal = getVfxPalette();
+    spawnGroundSlamVFX(player.position, pal.main, 1.4);
     cinematicCameraMode = "zoom_player";
 
     const cutin = document.getElementById('special-cutin');
-    const cutinChar = document.getElementById('cutin-char');
-    const cutinSkill = document.getElementById('cutin-skill');
-    cutinChar.innerText = document.getElementById('player-name').innerText.toUpperCase();
-    cutinSkill.innerText = player.skillName || "🔥 覇皇烈空閃 (EX SPECIAL) 🔥";
+    document.getElementById('cutin-char').innerText = player.design.name;
+    document.getElementById('cutin-skill').innerText = player.skillName;
     cutin.classList.add('active');
 
     setTimeout(() => {
         cutin.classList.remove('active');
         cinematicCameraMode = "action_wide";
 
-        // クロガネ（居合い）の場合は敵の背後へ神速残像移動！
-        if (player.charType === "kuro") {
-            for (let i = 1; i <= 4; i++) {
-                setTimeout(() => spawnAfterimageGhost(player, 0xff1e42), i * 35);
-            }
-            const behindCpu = cpu.position.clone().add(toCpu.clone().normalize().multiplyScalar(1.8));
-            player.position.copy(behindCpu);
+        // 5連撃の超ド派手属性フィニッシュ
+        spawnGroundSlamVFX(cpu.position, pal.main, 2.2);
+        spawnGroundSlamVFX(cpu.position, pal.sub, 1.6);
+
+        for (let i = 0; i < 5; i++) {
+            setTimeout(() => {
+                if (!isGameActive) return;
+                const partDmg = Math.round(78 * player.atkScale);
+                spawnHitSparks(cpu.position, i % 2 === 0 ? pal.main : pal.sub, 45);
+                spawnDamageNumber(cpu.position.x, cpu.position.y + cpu.airY, cpu.position.z, partDmg, "crit", i === 4 ? "FINISH!!" : "EX!");
+                applyDamage('cpu', partDmg);
+                addCombo(1, partDmg);
+            }, i * 85);
         }
 
-        // キャラ固有の超ド派手VFX発動！
-        spawnCharacterUltimateVFX(player.charType, player.position, cpu.position, player.themeColor);
-        spawnHitSparks(cpu.position, 0xffd32a, 70);
-
-        cameraShakeIntensity = 0.78;
-        hitStopTimer = 0.11;
-
-        const dmg = 390;
-        applyDamage('cpu', dmg);
-        spawnDamageNumber(cpu.position.x, cpu.position.y, cpu.position.z, dmg, "crit");
-        addCombo(6, dmg);
-
-        cpu.velocity.add(toCpu.normalize().multiplyScalar(16.0));
+        cameraShakeIntensity = 0.75;
+        hitStopTimer = 0.10;
+        cpu.velocity.add(toCpu.normalize().multiplyScalar(14.0));
+        cpu.airVelY = 6.5;
         cpu.state = "down";
-        cpu.stateDuration = 1.15;
-        cpu.stateTimer = 1.15;
-
-        showAnnouncement("ULTIMATE FINISH!! 💥", "#ffd32a");
+        cpu.stateDuration = 1.2;
+        cpu.stateTimer = 1.2;
 
         setTimeout(() => {
             cinematicCameraMode = null;
             player.isInvincible = false;
-        }, 650);
-    }, 520);
+        }, 620);
+    }, 480);
 }
 
-// プレイヤー回避（残像ステップ）
 function performPlayerDodge() {
     if (!isGameActive) return;
-    if (player.sp < 15) return;
-    if (player.state === "dodge" || player.state === "special" || player.state === "down") return;
+    if (player.sp < 15 || player.state === "special" || player.state === "down") return;
 
     player.sp -= 15;
     updateGauges();
 
     player.state = "dodge";
-    player.stateDuration = 0.30;
-    player.stateTimer = 0.30;
+    player.stateDuration = 0.28;
+    player.stateTimer = 0.28;
     player.isInvincible = true;
 
     let dir = new THREE.Vector3(input.moveX, 0, input.moveZ);
     if (dir.lengthSq() < 0.01) {
-        dir.set(0, 0, -1).applyAxisAngle(new THREE.Vector3(0, 1, 0), player.rotationY);
+        dir.set(-Math.sin(player.rotationY), 0, -Math.cos(player.rotationY));
     } else {
         dir.normalize();
     }
-    player.velocity.copy(dir.multiplyScalar(13.5));
+    player.velocity.copy(dir.multiplyScalar(player.speed * 2.1));
 
-    // 3連ホログラム残像を生成
-    spawnAfterimageGhost(player, player.themeColor);
-    setTimeout(() => spawnAfterimageGhost(player, player.themeColor), 75);
-    setTimeout(() => spawnAfterimageGhost(player, player.themeColor), 150);
+    const pal = getVfxPalette();
+    spawnAfterimageGhost(player, pal.main);
+    setTimeout(() => spawnAfterimageGhost(player, pal.main), 70);
+    setTimeout(() => { player.isInvincible = false; }, 280);
+}
 
-    setTimeout(() => {
-        player.isInvincible = false;
-    }, 300);
+function performPlayerJump() {
+    if (!isGameActive || player.airY > 0.05 || player.state === "special" || player.state === "down") return;
+    player.airVelY = 7.6;
+    player.state = "jump";
+    player.stateDuration = 0.55;
+    player.stateTimer = 0.55;
+    spawnFootstepDust(player.position, 1.6);
 }
 
 // ========================================================
-// 7. ダメージ & HP/SP ゲージ反映
+// 11. ダメージ ＆ ラウンド進行管理
 // ========================================================
 function applyDamage(target, amount) {
     if (target === 'cpu') {
@@ -1268,25 +1861,22 @@ function applyDamage(target, amount) {
         }
     } else {
         if (player.isInvincible) return;
-
         let finalDmg = Math.round(amount);
         if (player.isGuarding) {
             finalDmg = Math.floor(amount * 0.15);
-            spawnHitSparks(player.position, 0x00d2d3, 20);
-            spawnDamageNumber(player.position.x, player.position.y, player.position.z, finalDmg, "guard");
+            player.sp = Math.min(player.maxSp, player.sp + 14);
+            spawnHitSparks(player.position, 0x00f2fe, 20);
+            spawnDamageNumber(player.position.x, player.position.y, player.position.z, finalDmg, "guard", "GUARD");
         } else {
-            cameraShakeIntensity = 0.28;
-            spawnHitSparks(player.position, 0xff4757, 35);
+            cameraShakeIntensity = 0.30;
+            spawnHitSparks(player.position, 0xff3838, 35);
             spawnDamageNumber(player.position.x, player.position.y, player.position.z, finalDmg, "normal");
             player.state = "damaged";
-            player.stateDuration = 0.32;
-            player.stateTimer = 0.32;
+            player.stateDuration = 0.34;
+            player.stateTimer = 0.34;
         }
-
         player.hp = Math.max(0, player.hp - finalDmg);
-        player.sp = Math.min(player.maxSp, player.sp + 8);
         updateGauges();
-
         if (player.hp <= 0 && isGameActive) {
             handleGameOver();
         }
@@ -1294,28 +1884,23 @@ function applyDamage(target, amount) {
 }
 
 function updateGauges() {
-    const playerHpPct = (player.hp / player.maxHp) * 100;
-    const playerBar = document.getElementById('player-hp-bar');
-    const playerDelay = document.getElementById('player-hp-delay');
-    if (playerBar) playerBar.style.width = `${playerHpPct}%`;
-    if (playerDelay) playerDelay.style.width = `${playerHpPct}%`;
+    const pHpPct = (player.hp / player.maxHp) * 100;
+    document.getElementById('player-hp-bar').style.width = `${pHpPct}%`;
+    document.getElementById('player-hp-delay').style.width = `${pHpPct}%`;
     document.getElementById('player-hp-text').innerText = `${player.hp} / ${player.maxHp}`;
 
-    const playerSpPct = (player.sp / player.maxSp) * 100;
-    const playerSpBar = document.getElementById('player-sp-bar');
-    if (playerSpBar) playerSpBar.style.width = `${playerSpPct}%`;
-    document.getElementById('player-sp-text').innerText = `SP ${Math.floor(player.sp)} / ${player.maxSp}`;
+    const pSpPct = (player.sp / player.maxSp) * 100;
+    document.getElementById('player-sp-bar').style.width = `${pSpPct}%`;
+    document.getElementById('player-sp-text').innerText = `SP ${Math.floor(player.sp)}%`;
 
-    const cpuHpPct = (cpu.hp / cpu.maxHp) * 100;
-    const cpuBar = document.getElementById('cpu-hp-bar');
-    const cpuDelay = document.getElementById('cpu-hp-delay');
-    if (cpuBar) cpuBar.style.width = `${cpuHpPct}%`;
-    if (cpuDelay) cpuDelay.style.width = `${cpuHpPct}%`;
+    const cHpPct = (cpu.hp / cpu.maxHp) * 100;
+    document.getElementById('cpu-hp-bar').style.width = `${cHpPct}%`;
+    document.getElementById('cpu-hp-delay').style.width = `${cHpPct}%`;
     document.getElementById('cpu-hp-text').innerText = `${cpu.hp} / ${cpu.maxHp}`;
 
-    const cpuSpPct = (cpu.sp / cpu.maxSp) * 100;
-    const cpuSpBar = document.getElementById('cpu-sp-bar');
-    if (cpuSpBar) cpuSpBar.style.width = `${cpuSpPct}%`;
+    const cPoisePct = (cpu.poise / cpu.maxPoise) * 100;
+    document.getElementById('cpu-sp-bar').style.width = `${cPoisePct}%`;
+    document.getElementById('cpu-stun-text').innerText = cpu.stunTimer > 0 ? `😵 ひるみ中!` : `体幹 ${Math.round(cPoisePct)}%`;
 }
 
 function showAnnouncement(text, color = "#ffd32a") {
@@ -1325,21 +1910,19 @@ function showAnnouncement(text, color = "#ffd32a") {
     elem.classList.remove('active');
     void elem.offsetWidth;
     elem.classList.add('active');
-
-    setTimeout(() => {
-        elem.classList.remove('active');
-    }, 1800);
+    setTimeout(() => elem.classList.remove('active'), 1700);
 }
 
 function handleVictory() {
     isGameActive = false;
     isKoSlowMo = true;
-    slowMoTimer = 1.3;
-    spawnGroundSlamVFX(cpu.position, 0xffd32a, 1.8);
-    showAnnouncement("K.O. !! 🏆 VICTORY!", "#ffd32a");
+    slowMoTimer = 1.25;
+    spawnGroundSlamVFX(cpu.position, 0xffd32a, 2.0);
+    showAnnouncement("K.O. !! 🏆 ROUND CLEAR!", "#ffd32a");
 
     currentWins++;
     document.getElementById('current-wins').innerText = currentWins;
+    document.getElementById('round-num-val').innerText = currentWins + 1;
 
     if (currentWins > highScore) {
         highScore = currentWins;
@@ -1347,9 +1930,7 @@ function handleVictory() {
         document.getElementById('high-score').innerText = highScore;
     }
 
-    setTimeout(() => {
-        spawnNextCpu();
-    }, 2100);
+    setTimeout(() => spawnNextCpu(), 2000);
 }
 
 function handleGameOver() {
@@ -1369,27 +1950,27 @@ function handleGameOver() {
         document.getElementById('modal-wins').innerText = currentWins;
         document.getElementById('modal-high-score').innerText = highScore;
         document.getElementById('result-modal').style.display = 'flex';
-    }, 1500);
+    }, 1400);
 }
 
 function spawnNextCpu() {
-    const style = CPU_STYLES[Math.floor(Math.random() * CPU_STYLES.length)];
-    const name = ENEMY_NAMES[Math.floor(Math.random() * ENEMY_NAMES.length)];
-    currentCpuInfo = {
-        name: `Lv.${currentWins + 1} ${name}`,
-        style: style.type,
-        detail: style.detail,
-        styleInfo: style
-    };
-
-    cpu.styleInfo = style;
+    const boss = CPU_BOSS_TYPES[currentWins % CPU_BOSS_TYPES.length];
+    cpu.bossInfo = boss;
     cpu.maxHp = Math.round(1000 * Math.pow(1.08, currentWins));
     cpu.hp = cpu.maxHp;
-    cpu.sp = 30;
-    cpu.speed = Math.min(7.5, 4.8 + currentWins * 0.15);
-    cpu.position.set(4.5, 0, 0);
+    cpu.maxPoise = Math.round(boss.poiseMax * Math.pow(1.04, currentWins));
+    cpu.poise = cpu.maxPoise;
+    cpu.stunTimer = 0;
+    cpu.airY = 0;
+    cpu.airVelY = 0;
+    cpu.speed = Math.min(7.2, 4.6 + currentWins * 0.14);
+    cpu.position.set(3.8, 0, -0.8);
     cpu.velocity.set(0, 0, 0);
     cpu.state = "idle";
+
+    roundTimer = 99;
+    document.getElementById('round-timer-val').innerText = roundTimer;
+    document.getElementById('round-num-val').innerText = currentWins + 1;
 
     if (currentWins > 0) {
         player.hp = Math.min(player.maxHp, Math.round(player.hp + player.maxHp * 0.35));
@@ -1397,276 +1978,168 @@ function spawnNextCpu() {
         player.hp = player.maxHp;
     }
     player.sp = Math.min(player.maxSp, player.sp + 30);
-    player.position.set(-4.5, 0, 0);
+    player.position.set(-3.8, 0, 0.8);
+    player.airY = 0;
+    player.airVelY = 0;
     player.velocity.set(0, 0, 0);
     player.state = "idle";
 
-    document.getElementById('cpu-name').innerText = currentCpuInfo.name;
-    document.getElementById('cpu-type').innerText = `${currentCpuInfo.style}`;
+    document.getElementById('cpu-name').innerText = `Lv.${currentWins + 1} ${boss.name}`;
+    document.getElementById('cpu-type').innerText = boss.style;
 
-    setupCpuModel(style);
-    spawnGroundSlamVFX(cpu.position, cpu.themeColor, 1.0);
+    setupCpuBossModel(boss);
+    spawnGroundSlamVFX(cpu.position, boss.accentColor, 1.2);
     updateGauges();
     isGameActive = true;
-    showAnnouncement(`ROUND ${currentWins + 1} - FIGHT!`, "#00d2d3");
+    showAnnouncement(`ROUND ${currentWins + 1} - FIGHT!`, "#00f2fe");
 }
 
 function resetGame() {
     currentWins = 0;
     document.getElementById('current-wins').innerText = currentWins;
     document.getElementById('result-modal').style.display = 'none';
-
     player.hp = player.maxHp;
     player.sp = 60;
-    player.position.set(-4.5, 0, 0);
-    player.state = "idle";
-
     spawnNextCpu();
 }
 
 function shareOnX() {
-    const text = `⚔️【3D自作キャラバトル】\nBlender×Three.js 古代遺跡コロシアムの死闘を制し、🔥【 ${currentWins} 連勝 】🔥 を達成！\n\n#自作キャラバトル #アンリミテッドクルーズ #VRM #Blender #Unity6`;
-    const gameUrl = window.location.href;
-    const xUrl = `https://twitter.com/intent/tweet?text=${encodeURIComponent(text)}&url=${encodeURIComponent(gameUrl)}`;
+    const text = `⚔️【3D自作キャラバトル】\nオリキャラ「${player.design.name}」(ATK:${player.atkScale}x / 範囲:${player.attackRange}m)で 🔥【 ${currentWins} 連勝 】🔥 を達成！\n\n#自作キャラバトル #アンリミテッドコロシアム`;
+    const xUrl = `https://twitter.com/intent/tweet?text=${encodeURIComponent(text)}&url=${encodeURIComponent(window.location.href)}`;
     window.open(xUrl, '_blank');
 }
 
 // ========================================================
-// 8. CPU AI & 全身フルボディ・アクションモーションエンジン
+// 12. CPU AI（ひるみ・打ち上げ中は行動不能！）＆ 全身モーション補間
 // ========================================================
-function updateCpuAI(dt, elapsedTime) {
+function updateCpuAI(dt) {
     if (!isGameActive || cpu.state === "down") return;
+
+    // 体幹自然回復
+    cpu.poise = Math.min(cpu.maxPoise, cpu.poise + 8.0 * dt);
+
+    // 😵 ひるみ中（Hit-Stun）や空中打ち上げ中は攻撃・移動できない！
+    if (cpu.stunTimer > 0 || cpu.airY > 0.05) {
+        cpu.stunTimer = Math.max(0, cpu.stunTimer - dt);
+        cpu.isGuarding = false;
+        return;
+    }
 
     cpu.aiTimer -= dt;
     const toPlayer = new THREE.Vector3().subVectors(player.position, cpu.position);
     const dist = toPlayer.length();
-
     cpu.rotationY = Math.atan2(toPlayer.x, toPlayer.z);
 
-    const atkPowerScale = Math.pow(1.05, currentWins);
-    const intervalCooldown = Math.max(0.24, 0.58 - currentWins * 0.02);
+    const atkScale = Math.pow(1.05, currentWins);
 
     if (cpu.aiTimer <= 0) {
-        cpu.aiTimer = intervalCooldown + Math.random() * 0.3;
-
-        if (cpu.sp >= 50 && dist < 5.5 && Math.random() < 0.38) {
-            cpu.sp -= 50;
-            cpu.state = "special";
-            cpu.stateDuration = 0.85;
-            cpu.stateTimer = 0.85;
-            updateGauges();
-            showAnnouncement("⚠️ CPU SPECIAL ATTACK! ⚠️", "#ff4757");
-            spawnCharacterUltimateVFX("kuro", cpu.position, player.position, 0xff4757);
-            applyDamage('player', 230 * atkPowerScale);
-            return;
-        }
-
-        if (cpu.styleInfo.category.includes("melee")) {
-            if (dist > 2.2) {
-                cpu.aiAction = "chase";
-            } else {
-                const r = Math.random();
-                if (r < 0.64) cpu.aiAction = "attack";
-                else if (r < 0.86) cpu.aiAction = "guard";
-                else cpu.aiAction = "circle";
-            }
+        cpu.aiTimer = Math.max(0.28, 0.62 - currentWins * 0.02) + Math.random() * 0.25;
+        if (dist > 2.6) {
+            cpu.aiAction = "chase";
         } else {
-            if (dist < 3.5) cpu.aiAction = "retreat";
-            else cpu.aiAction = "shoot";
+            const r = Math.random();
+            if (r < 0.65) cpu.aiAction = "attack";
+            else cpu.aiAction = "guard";
         }
     }
 
     cpu.isGuarding = false;
     if (cpu.aiAction === "chase") {
-        const moveDir = toPlayer.clone().normalize();
-        cpu.velocity.add(moveDir.multiplyScalar(cpu.speed * dt * 5.2));
-    } else if (cpu.aiAction === "attack" && cpu.state !== "attack" && cpu.state !== "special") {
+        cpu.velocity.add(toPlayer.clone().normalize().multiplyScalar(cpu.speed * dt * 5.2));
+    } else if (cpu.aiAction === "attack" && cpu.state !== "attack") {
         cpu.comboStep = (cpu.comboStep % 3) + 1;
         cpu.state = "attack";
-        cpu.stateDuration = 0.42;
-        cpu.stateTimer = 0.42;
-        cpu.velocity.add(toPlayer.clone().normalize().multiplyScalar(3.5));
-        spawnCrescentSlash(cpu.position, player.position, 0xff4757, cpu.comboStep);
-        if (dist < 2.6) {
-            applyDamage('player', 60 * atkPowerScale);
-            cpu.sp = Math.min(cpu.maxSp, cpu.sp + 12);
+        cpu.stateDuration = 0.46;
+        cpu.stateTimer = 0.46;
+        cpu.velocity.add(toPlayer.clone().normalize().multiplyScalar(3.8));
+        spawnCrescentSlash(cpu.position, player.position, 0xff3838, cpu.comboStep, 1.15);
+        if (dist < 2.9 && cpu.stunTimer <= 0) {
+            applyDamage('player', 58 * atkScale);
         }
     } else if (cpu.aiAction === "guard") {
         cpu.isGuarding = true;
-    } else if (cpu.aiAction === "retreat") {
-        const moveDir = toPlayer.clone().negate().normalize();
-        cpu.velocity.add(moveDir.multiplyScalar(cpu.speed * dt * 6.0));
-    } else if (cpu.aiAction === "shoot" && cpu.state !== "attack") {
-        cpu.state = "attack";
-        cpu.stateDuration = 0.45;
-        cpu.stateTimer = 0.45;
-        spawnCrescentSlash(cpu.position, player.position, 0x9b59b6, 1);
-        if (dist < 8.5) {
-            applyDamage('player', 45 * atkPowerScale);
-        }
     }
-
-    setBarrierOpacity(cpu.guardBarrierMesh, cpu.isGuarding, elapsedTime);
 }
 
-/**
- * 全身フルボディ・アクションモーションエンジン
- * (animPivot によるジャンプ・前傾・360度スピン・空中宙返り + 胸・腕・脚の多関節連動)
- */
 function updateFullBodyMotion(entity, dt, isMoving) {
-    entity.animTime += dt * (isMoving ? 14.0 : 4.0);
+    entity.animTime += dt * (isMoving ? 14.0 : 4.2);
     const t = entity.animTime;
     const pivot = entity.animPivot;
     const j = entity.customJoints || entity.joints || {};
-
-    // 進行度 p (0.0 -> 1.0)
     const dur = Math.max(0.01, entity.stateDuration || 0.35);
     const p = THREE.MathUtils.clamp(1.0 - (entity.stateTimer / dur), 0.0, 1.0);
 
-    // ピボットのリセット目標値
-    let targetPivotY = 0;
-    let targetPivotRotX = 0;
-    let targetPivotRotY = 0;
-    let targetPivotRotZ = 0;
-
-    let torsoRotX = 0, torsoRotY = 0;
-    let lArmX = 0, lArmZ = 0.18;
-    let rArmX = 0, rArmZ = -0.18;
+    let py = entity.airY || 0;
+    let rx = 0, ry = 0, rz = 0;
+    let torsoY = 0;
+    let lArmX = 0, lArmZ = 0.18, rArmX = 0, rArmZ = -0.18;
     let lLegX = 0, rLegX = 0;
 
-    if (entity.state === "attack") {
-        if (entity.comboStep === 1) {
-            // 【1段目：踏み込み斜め袈裟斬り】溜め -> 腰を鋭く捻って一閃！
-            const swingPhase = p < 0.25 ? -p * 2.0 : (p - 0.25) * 1.33;
-            targetPivotRotX = 0.25; // 前傾踏み込み
-            targetPivotY = -0.08 * Math.sin(p * Math.PI); // 重心沈み込み
-            torsoRotY = THREE.MathUtils.lerp(-0.65, 0.85, Math.max(0, swingPhase));
-            rArmX = THREE.MathUtils.lerp(-2.3, 0.75, Math.max(0, swingPhase));
-            rArmZ = -0.35;
-            lArmX = 0.55;
-            lLegX = -0.5;
-            rLegX = 0.5;
-
-        } else if (entity.comboStep === 2) {
-            // 【2段目：360度トルネード回転薙ぎ払い】全身が独楽のように1回転スピン！
-            targetPivotRotY = p * Math.PI * 2.0;
-            targetPivotRotX = 0.18;
-            targetPivotY = Math.sin(p * Math.PI) * 0.22;
-            rArmX = -1.35;
-            rArmZ = -1.1; // 腕を水平に大きく広げる
-            lArmX = -1.2;
-            lArmZ = 1.1;
-            lLegX = -0.35;
-            rLegX = 0.35;
-
+    if (entity.state === "attack" || entity.state === "skill") {
+        if (entity.attackSubType === "launch" || entity.comboStep === 3) {
+            // 🗡️ 打ち上げ／サマーソルト斬り
+            py += Math.sin(p * Math.PI) * 1.15;
+            rx = -p * Math.PI * 2.0;
+            rArmX = -2.4 + p * 3.1;
+            lArmX = -1.8 + p * 2.5;
+        } else if (entity.attackSubType === "wide" || entity.comboStep === 2) {
+            // ⚔️ 360度回転なぎ払い
+            ry = p * Math.PI * 2.0;
+            rx = 0.20;
+            rArmX = -1.4; rArmZ = -1.1;
+            lArmX = -1.2; lArmZ = 1.0;
         } else {
-            // 【3段目：空中フロントフリップ・メテオ兜割り】高く跳躍して空中で縦1回転スラム！
-            targetPivotY = Math.sin(p * Math.PI) * 1.55;
-            targetPivotRotX = p * Math.PI * 2.0; // 前方宙返り (サマーソルト/フロントフリップ)
-            rArmX = -2.5 + p * 3.2;
-            lArmX = -2.2 + p * 2.8;
-            lLegX = 0.65;
-            rLegX = -0.45;
+            // ⚡ 高速踏み込み袈裟斬り・連撃
+            const sw = p < 0.25 ? -p * 2.0 : (p - 0.25) * 1.35;
+            rx = 0.26;
+            torsoY = THREE.MathUtils.lerp(-0.75, 0.95, Math.max(0, sw));
+            rArmX = THREE.MathUtils.lerp(-2.2, 0.85, Math.max(0, sw));
+            lLegX = -0.55; rLegX = 0.55;
         }
-
-    } else if (entity.state === "special") {
-        // 【必殺技モーション】キャラクタータイプに応じた劇的ポーズ
-        if (entity.charType === "seraph") {
-            // セラフ: 空中に神々しく浮遊し、両腕を大きく天に掲げる
-            targetPivotY = Math.sin(p * Math.PI) * 1.85;
-            rArmX = -2.4;
-            rArmZ = -0.6;
-            lArmX = -2.4;
-            lArmZ = 0.6;
-        } else if (entity.charType === "leo") {
-            // レオ: 大跳躍から渾身のメテオスマッシュ
-            targetPivotY = Math.sin(p * Math.PI) * 1.6;
-            targetPivotRotX = 0.45;
-            rArmX = -1.8 + p * 2.6;
-            lArmX = -1.8 + p * 2.6;
-        } else {
-            // 居合い・抜刀突撃ポーズ
-            targetPivotRotX = 0.38;
-            torsoRotY = Math.sin(p * Math.PI * 4) * 0.9;
-            rArmX = -1.5;
-            lArmX = 0.6;
-        }
-
-    } else if (entity.state === "dodge") {
-        // 【ステップ回避】低い姿勢でアクロバティックなスピン回避
-        targetPivotY = 0.25;
-        targetPivotRotZ = p * Math.PI * 2.0;
-        targetPivotRotX = 0.35;
-
-    } else if (entity.state === "damaged") {
-        // 【被弾仰け反り】
-        targetPivotRotX = -0.48 * Math.sin(p * Math.PI);
-        rArmX = -0.6;
-        lArmX = -0.6;
-
+    } else if (entity.state === "stunned") {
+        // 😵 ひるみ（のけぞり）モーション！
+        rx = -0.55 * Math.sin(p * Math.PI);
+        rz = Math.sin(t * 8.0) * 0.18;
+        rArmX = -0.9; lArmX = -0.9;
+    } else if (entity.state === "launched") {
+        // 💫 空中打ち上げキリギリス回転！
+        rx = p * Math.PI * 2.0;
+        rArmX = -1.4; lArmX = -1.4;
     } else if (entity.state === "down") {
-        // 【吹き飛び＆ダウン】空中でバク転しながら倒れ込む
-        targetPivotY = Math.max(0, Math.sin(p * Math.PI) * 1.1);
-        targetPivotRotX = -Math.min(Math.PI * 0.48, p * Math.PI * 1.2);
-        rArmX = -1.2;
-        lArmX = -1.2;
-
+        rx = -Math.PI * 0.46;
     } else if (entity.isGuarding) {
-        // 【ガード構え】重心を落とし、両腕を胸の前でクロス
-        targetPivotY = -0.10;
-        targetPivotRotX = 0.12;
-        lArmX = -1.15;
-        lArmZ = -0.35;
-        rArmX = -1.15;
-        rArmZ = 0.35;
-        lLegX = -0.3;
-        rLegX = 0.3;
-
+        py -= 0.12;
+        lArmX = -1.2; lArmZ = -0.35;
+        rArmX = -1.2; rArmZ = 0.35;
     } else if (isMoving) {
-        // 【前傾スプリント走行】腰バウンス + 胸ツイスト + 腕脚の力強い振り
-        targetPivotRotX = 0.26;
-        targetPivotY = Math.abs(Math.sin(t)) * 0.11;
-        torsoRotY = Math.sin(t) * 0.28;
-        lLegX = Math.sin(t) * 0.85;
-        rLegX = -Math.sin(t) * 0.85;
-        lArmX = -Math.sin(t) * 0.78 - 0.2;
-        rArmX = Math.sin(t) * 0.78 - 0.3;
-
+        rx = 0.28;
+        py += Math.abs(Math.sin(t)) * 0.12;
+        torsoY = Math.sin(t) * 0.28;
+        lLegX = Math.sin(t) * 0.88;
+        rLegX = -Math.sin(t) * 0.88;
+        lArmX = -Math.sin(t) * 0.75 - 0.2;
+        rArmX = Math.sin(t) * 0.75 - 0.35;
     } else {
-        // 【ファイティングスタンス（格闘待機構え）】呼吸バウンス + 半身構え
-        targetPivotY = Math.sin(t * 0.8) * 0.04;
-        torsoRotY = -0.25;
-        rArmX = -0.55 + Math.sin(t * 0.8) * 0.08;
-        lArmX = -0.40 - Math.sin(t * 0.8) * 0.08;
-        lLegX = -0.18;
-        rLegX = 0.18;
+        py += Math.sin(t * 0.8) * 0.04;
+        torsoY = -0.24;
+        rArmX = -0.45 + Math.sin(t * 0.8) * 0.08;
+        lArmX = -0.35 - Math.sin(t * 0.8) * 0.08;
+        lLegX = -0.16; rLegX = 0.16;
     }
 
-    // ピボットへ適用
     if (pivot) {
-        pivot.position.y = targetPivotY;
-        pivot.rotation.set(targetPivotRotX, targetPivotRotY, targetPivotRotZ);
+        pivot.position.y = py;
+        pivot.rotation.set(rx, ry, rz);
     }
-
-    // 関節へ適用
-    if (j.torso) {
-        j.torso.rotation.x = torsoRotX;
-        j.torso.rotation.y = torsoRotY;
-    }
-    if (j.leftArm) {
-        j.leftArm.rotation.x = lArmX;
-        j.leftArm.rotation.z = lArmZ;
-    }
-    if (j.rightArm) {
-        j.rightArm.rotation.x = rArmX;
-        j.rightArm.rotation.z = rArmZ;
-    }
+    if (j.torso) j.torso.rotation.y = torsoY;
+    if (j.leftArm) { j.leftArm.rotation.x = lArmX; j.leftArm.rotation.z = lArmZ; }
+    if (j.rightArm) { j.rightArm.rotation.x = rArmX; j.rightArm.rotation.z = rArmZ; }
     if (j.leftLeg) j.leftLeg.rotation.x = lLegX;
     if (j.rightLeg) j.rightLeg.rotation.x = rLegX;
 }
 
 // ========================================================
-// 9. メイン更新 & ポストプロセスレンダーループ
+// 13. メインアニメーションループ
 // ========================================================
 function animate() {
     requestAnimationFrame(animate);
@@ -1674,15 +2147,13 @@ function animate() {
     let rawDt = Math.min(clock.getDelta(), 0.05);
     const elapsedTime = clock.getElapsedTime();
 
-    // ヒットストップ処理 (打撃の瞬間に画面がピタッと止まり、カメラだけが震える！)
     if (hitStopTimer > 0) {
         hitStopTimer -= rawDt;
         if (cameraShakeIntensity > 0.01) {
-            camera.position.x += (Math.random() - 0.5) * cameraShakeIntensity * 0.6;
-            camera.position.y += (Math.random() - 0.5) * cameraShakeIntensity * 0.6;
+            camera.position.x += (Math.random() - 0.5) * cameraShakeIntensity * 0.5;
+            camera.position.y += (Math.random() - 0.5) * cameraShakeIntensity * 0.5;
         }
-        if (composer) composer.render();
-        else renderer.render(scene, camera);
+        renderer.render(scene, camera);
         return;
     }
 
@@ -1693,50 +2164,56 @@ function animate() {
         if (slowMoTimer <= 0) isKoSlowMo = false;
     }
 
-    // 松明の炎のゆらぎ
-    torchFlames.forEach((tf, i) => {
-        const flicker = Math.sin(elapsedTime * 9.0 + i * 1.7) * 0.65;
-        tf.light.intensity = 4.5 + flicker;
-        tf.mesh.position.y = tf.baseY + Math.sin(elapsedTime * 7.0 + i) * 0.06;
-        tf.mesh.rotation.y += dt * 3.5;
-    });
-
-    // 海面のさざ波
-    if (seaWaterMesh) {
-        seaWaterMesh.position.y = -8.0 + Math.sin(elapsedTime * 1.2) * 0.18;
-    }
-
-    // SP自然回復
+    // ラウンドタイマー (99カウントダウン)
     if (isGameActive) {
-        player.sp = Math.min(player.maxSp, player.sp + 3.5 * dt);
-        cpu.sp = Math.min(cpu.maxSp, cpu.sp + 2.6 * dt);
+        roundTimerAccum += dt;
+        if (roundTimerAccum >= 1.0) {
+            roundTimerAccum = 0;
+            roundTimer = Math.max(0, roundTimer - 1);
+            document.getElementById('round-timer-val').innerText = String(roundTimer).padStart(2, '0');
+        }
+        player.sp = Math.min(player.maxSp, player.sp + 4.2 * dt);
         updateGauges();
     }
 
-    // --- プレイヤー操作・移動更新 ---
+    // プレイヤー周囲のキラキラオーラ更新 (画像1再現)
+    playerAuraParticles.forEach(p => {
+        p.angle += dt * p.speed;
+        const y = ((p.heightOffset + elapsedTime * 0.9) % 1.65) + 0.15;
+        p.mesh.position.set(Math.cos(p.angle) * p.radius, y + player.airY, Math.sin(p.angle) * p.radius);
+        p.mesh.rotation.y += dt * 4;
+    });
+
+    // 重力・空中物理（打ち上げ・ジャンプ）
+    [player, cpu].forEach(ent => {
+        if (ent.airY > 0 || ent.airVelY !== 0) {
+            ent.airY += ent.airVelY * dt;
+            ent.airVelY -= 19.5 * dt;
+            if (ent.airY <= 0) {
+                ent.airY = 0;
+                ent.airVelY = 0;
+                spawnFootstepDust(ent.position, 1.5);
+            }
+        }
+    });
+
+    // プレイヤー移動
     let playerMoving = false;
     if (isGameActive && player.state !== "special" && player.state !== "down") {
         player.isGuarding = input.guard && player.state !== "attack";
-        setBarrierOpacity(player.guardBarrierMesh, player.isGuarding, elapsedTime);
+        player.guardBarrierMesh.material.opacity = player.isGuarding ? 0.38 : 0.0;
 
         if (!player.isGuarding && player.state !== "attack" && (Math.abs(input.moveX) > 0.05 || Math.abs(input.moveZ) > 0.05)) {
-            player.state = "move";
             playerMoving = true;
             const camForward = new THREE.Vector3(0, 0, -1).applyAxisAngle(new THREE.Vector3(0, 1, 0), camera.rotation.y);
             const camRight = new THREE.Vector3(1, 0, 0).applyAxisAngle(new THREE.Vector3(0, 1, 0), camera.rotation.y);
+            const moveVec = new THREE.Vector3().addScaledVector(camRight, input.moveX).addScaledVector(camForward, -input.moveZ).normalize();
+            player.velocity.add(moveVec.multiplyScalar(player.speed * dt * 6.8));
 
-            const moveVec = new THREE.Vector3()
-                .addScaledVector(camRight, input.moveX)
-                .addScaledVector(camForward, -input.moveZ)
-                .normalize();
-
-            player.velocity.add(moveVec.multiplyScalar(player.speed * dt * 7.2));
-
-            // 走行時の砂煙ダスト
             dustTimer -= dt;
-            if (dustTimer <= 0) {
-                spawnFootstepDust(player.position);
-                dustTimer = 0.12;
+            if (dustTimer <= 0 && player.airY <= 0.05) {
+                spawnFootstepDust(player.position, 1.1);
+                dustTimer = 0.11;
             }
 
             if (input.lockOn) {
@@ -1745,8 +2222,6 @@ function animate() {
             } else {
                 player.rotationY = Math.atan2(moveVec.x, moveVec.z);
             }
-        } else if (player.state === "move") {
-            player.state = "idle";
         }
     }
 
@@ -1757,51 +2232,57 @@ function animate() {
             player.comboStep = 0;
         }
     }
-
     if (cpu.stateTimer > 0) {
         cpu.stateTimer -= dt;
-        if (cpu.stateTimer <= 0) cpu.state = "idle";
+        if (cpu.stateTimer <= 0 && cpu.stunTimer <= 0) cpu.state = "idle";
     }
 
-    updateCpuAI(dt, elapsedTime);
+    updateCpuAI(dt);
+    cpu.guardBarrierMesh.material.opacity = cpu.isGuarding ? 0.38 : 0.0;
 
-    // 物理移動
+    // 魔弾プロジェクタイル更新
+    for (let i = projectilesList.length - 1; i >= 0; i--) {
+        const pr = projectilesList[i];
+        pr.life -= dt;
+        pr.mesh.position.addScaledVector(pr.vel, dt);
+        if (pr.mesh.position.distanceTo(cpu.position.clone().add(new THREE.Vector3(0, 1.1, 0))) < 1.35) {
+            const dmg = Math.round(54 * player.atkScale);
+            cpu.stunTimer = 0.48 * player.stunPower;
+            cpu.state = "stunned";
+            cpu.stateTimer = cpu.stunTimer;
+            spawnHitSparks(cpu.position, pr.colorHex, 28);
+            spawnDamageNumber(cpu.position.x, cpu.position.y + cpu.airY, cpu.position.z, dmg, "stun", "MAGIC!");
+            applyDamage('cpu', dmg);
+            addCombo(1, dmg);
+            scene.remove(pr.mesh);
+            projectilesList.splice(i, 1);
+            continue;
+        }
+        if (pr.life <= 0) {
+            scene.remove(pr.mesh);
+            projectilesList.splice(i, 1);
+        }
+    }
+
+    // 位置＆アリーナ境界
     player.position.addScaledVector(player.velocity, dt);
-    player.velocity.multiplyScalar(0.83);
-
+    player.velocity.multiplyScalar(0.82);
     cpu.position.addScaledVector(cpu.velocity, dt);
-    cpu.velocity.multiplyScalar(0.83);
+    cpu.velocity.multiplyScalar(0.82);
 
-    // アリーナ境界制限
-    const pDist = Math.hypot(player.position.x, player.position.z);
-    if (pDist > arenaRadius - 0.8) {
-        player.position.multiplyScalar((arenaRadius - 0.8) / pDist);
-    }
-    const cDist = Math.hypot(cpu.position.x, cpu.position.z);
-    if (cDist > arenaRadius - 0.8) {
-        cpu.position.multiplyScalar((arenaRadius - 0.8) / cDist);
-    }
+    [player, cpu].forEach(ent => {
+        const d = Math.hypot(ent.position.x, ent.position.z);
+        if (d > arenaRadius - 0.7) ent.position.multiplyScalar((arenaRadius - 0.7) / d);
+    });
 
     player.group.position.copy(player.position);
     player.group.rotation.y = player.rotationY + (player.isVrm && !player.isCustomRig ? 0 : Math.PI);
-
     cpu.group.position.copy(cpu.position);
     cpu.group.rotation.y = cpu.rotationY + Math.PI;
 
-    // 全身フルボディモーションの適用
     if (player.vrm) player.vrm.update(dt);
     updateFullBodyMotion(player, dt, playerMoving);
-
-    const cpuMoving = cpu.velocity.lengthSq() > 0.25;
-    updateFullBodyMotion(cpu, dt, cpuMoving);
-
-    // サイキッカーのBlender念動オーブ回転
-    cpu.orbs.forEach(item => {
-        const angle = elapsedTime * 3.0 + item.angleOffset;
-        item.mesh.position.set(Math.cos(angle) * 1.0, 1.25 + Math.sin(elapsedTime * 3.5) * 0.18, Math.sin(angle) * 1.0);
-        item.mesh.rotation.y += dt * 3.5;
-        item.mesh.rotation.x += dt * 2.0;
-    });
+    updateFullBodyMotion(cpu, dt, cpu.velocity.lengthSq() > 0.25);
 
     // エフェクト更新
     for (let i = effectsList.length - 1; i >= 0; i--) {
@@ -1814,27 +2295,25 @@ function animate() {
         }
     }
 
-    // --- TPSカメラ制御 + 必殺技シネマティックカメラ + カメラシェイク ---
+    // 画像1・2のアングルを再現する斜め後方TPSカメラ
     const midPoint = new THREE.Vector3().addVectors(player.position, cpu.position).multiplyScalar(0.5);
-    const toMid = new THREE.Vector3().subVectors(player.position, midPoint).normalize();
+    const toPlayerFromCpu = new THREE.Vector3().subVectors(player.position, cpu.position).normalize();
+    const rightVec = new THREE.Vector3(-toPlayerFromCpu.z, 0, toPlayerFromCpu.x);
+
     let camTargetPos;
-    let lookTarget = new THREE.Vector3(midPoint.x, 1.15, midPoint.z);
+    let lookTarget = new THREE.Vector3(midPoint.x, 1.25 + (player.airY + cpu.airY) * 0.3, midPoint.z);
 
     if (cinematicCameraMode === "zoom_player") {
-        // 必殺技カットイン時：プレイヤーの斜め正面へ急接近クローズアップ！
         const frontDir = new THREE.Vector3(Math.sin(player.rotationY), 0, Math.cos(player.rotationY));
-        camTargetPos = player.position.clone().addScaledVector(frontDir, 2.2).add(new THREE.Vector3(0.8, 1.45, 0));
-        lookTarget.copy(player.position).add(new THREE.Vector3(0, 1.35, 0));
+        camTargetPos = player.position.clone().addScaledVector(frontDir, 2.3).add(new THREE.Vector3(0.7, 1.4, 0));
+        lookTarget.copy(player.position).add(new THREE.Vector3(0, 1.3, 0));
         camera.position.lerp(camTargetPos, 0.22);
-    } else if (cinematicCameraMode === "action_wide") {
-        // 必殺技炸裂時：戦場全体をドラマチックな斜め俯瞰から捉える！
-        camTargetPos = midPoint.clone().addScaledVector(toMid, 5.8).add(new THREE.Vector3(1.5, 4.2, 1.5));
-        camera.position.lerp(camTargetPos, 0.14);
     } else {
         camTargetPos = player.position.clone()
-            .addScaledVector(toMid, 4.2)
-            .add(new THREE.Vector3(0, 2.85, 0));
-        camera.position.lerp(camTargetPos, 0.10);
+            .addScaledVector(toPlayerFromCpu, 4.4)
+            .addScaledVector(rightVec, -1.1)
+            .add(new THREE.Vector3(0, 2.75, 0));
+        camera.position.lerp(camTargetPos, 0.11);
     }
 
     if (cameraShakeIntensity > 0.01) {
@@ -1846,39 +2325,37 @@ function animate() {
     }
     camera.lookAt(lookTarget);
 
-    if (composer) {
-        composer.render();
-    } else {
-        renderer.render(scene, camera);
-    }
+    renderer.render(scene, camera);
 }
 
 function onResize() {
     const container = document.getElementById('three-canvas-container');
     if (!container || !renderer) return;
-    const w = container.clientWidth;
-    const h = container.clientHeight;
-    camera.aspect = w / h;
+    camera.aspect = container.clientWidth / container.clientHeight;
     camera.updateProjectionMatrix();
-    renderer.setSize(w, h);
-    if (composer) composer.setSize(w, h);
+    renderer.setSize(container.clientWidth, container.clientHeight);
 }
 
 // ========================================================
-// 10. 入力イベントバインド
+// 14. 入力バインド（キーボード ＆ 左下ATTACK / 右下SKILL 4ボタンパッド）
 // ========================================================
 function setupInputs() {
     window.addEventListener('keydown', e => {
+        if (document.activeElement && (document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'SELECT')) return;
         const k = e.key.toLowerCase();
         if (k === 'w' || k === 'arrowup') input.moveZ = 1;
         if (k === 's' || k === 'arrowdown') input.moveZ = -1;
         if (k === 'a' || k === 'arrowleft') input.moveX = -1;
         if (k === 'd' || k === 'arrowright') input.moveX = 1;
 
-        if (k === 'j' || k === 'z') performPlayerAttack();
+        if (k === 'j' || k === 'z') performPlayerAttack('rush');
+        if (k === 'i' || k === 'c') performPlayerAttack('wide');
+        if (k === 'u' || k === 'e') performPlayerAttack('launch');
+        if (k === 'o' || k === 'f') performSkillArts();
         if (k === 'k' || k === 'x') performPlayerSpecial();
-        if (k === ' ') { input.guard = true; e.preventDefault(); }
         if (k === 'l' || k === 'shift') performPlayerDodge();
+        if (k === 'v') performPlayerJump();
+        if (k === ' ') { input.guard = true; e.preventDefault(); }
         if (k === 'q') input.lockOn = !input.lockOn;
     });
 
@@ -1889,22 +2366,28 @@ function setupInputs() {
         if (k === ' ') input.guard = false;
     });
 
-    setupTouchJoystick();
-
-    const bindBtn = (id, onDown, onUp) => {
+    const bindPadBtn = (id, onDown, onUp) => {
         const el = document.getElementById(id);
         if (!el) return;
         el.addEventListener('touchstart', e => { e.preventDefault(); if (onDown) onDown(); });
         el.addEventListener('touchend', e => { e.preventDefault(); if (onUp) onUp(); });
-        el.addEventListener('mousedown', e => { if (onDown) onDown(); });
-        el.addEventListener('mouseup', e => { if (onUp) onUp(); });
+        el.addEventListener('mousedown', () => { if (onDown) onDown(); });
+        el.addEventListener('mouseup', () => { if (onUp) onUp(); });
     };
 
-    bindBtn('t-btn-attack', performPlayerAttack);
-    bindBtn('t-btn-special', performPlayerSpecial);
-    bindBtn('t-btn-dodge', performPlayerDodge);
-    bindBtn('t-btn-guard', () => { input.guard = true; }, () => { input.guard = false; });
+    // 左下 ATTACK 4ボタンパッド
+    bindPadBtn('btn-atk-rush',   () => performPlayerAttack('rush'));
+    bindPadBtn('btn-atk-wide',   () => performPlayerAttack('wide'));
+    bindPadBtn('btn-atk-heavy',  () => performPlayerAttack('launch'));
+    bindPadBtn('btn-atk-guard',  () => { input.guard = true; }, () => { input.guard = false; });
 
+    // 右下 SKILL 4ボタンパッド
+    bindPadBtn('btn-skl-ult',    performPlayerSpecial);
+    bindPadBtn('btn-skl-arts',   performSkillArts);
+    bindPadBtn('btn-skl-dodge',  performPlayerDodge);
+    bindPadBtn('btn-skl-jump',   performPlayerJump);
+
+    setupTouchJoystick();
     document.getElementById('btn-share-x').addEventListener('click', shareOnX);
     document.getElementById('btn-retry').addEventListener('click', resetGame);
 }
@@ -1914,56 +2397,48 @@ function setupTouchJoystick() {
     const stick = document.getElementById('joystick-stick');
     if (!zone || !stick) return;
 
-    let touchId = null;
+    let dragging = false;
     let startX = 0, startY = 0;
 
-    zone.addEventListener('touchstart', e => {
-        e.preventDefault();
-        const touch = e.changedTouches[0];
-        touchId = touch.identifier;
+    const startDrag = (cx, cy) => {
+        dragging = true;
         const rect = zone.getBoundingClientRect();
         startX = rect.left + rect.width / 2;
         startY = rect.top + rect.height / 2;
-    });
+        moveDrag(cx, cy);
+    };
 
-    zone.addEventListener('touchmove', e => {
-        e.preventDefault();
-        for (let i = 0; i < e.changedTouches.length; i++) {
-            const touch = e.changedTouches[i];
-            if (touch.identifier === touchId) {
-                const dx = touch.clientX - startX;
-                const dy = touch.clientY - startY;
-                const dist = Math.hypot(dx, dy);
-                const maxR = 40;
-                const angle = Math.atan2(dy, dx);
-                const clamped = Math.min(dist, maxR);
+    const moveDrag = (cx, cy) => {
+        if (!dragging) return;
+        const dx = cx - startX;
+        const dy = cy - startY;
+        const dist = Math.hypot(dx, dy);
+        const maxR = 32;
+        const angle = Math.atan2(dy, dx);
+        const clamped = Math.min(dist, maxR);
+        stick.style.transform = `translate(${Math.cos(angle) * clamped}px, ${Math.sin(angle) * clamped}px)`;
+        input.moveX = (Math.cos(angle) * clamped) / maxR;
+        input.moveZ = -(Math.sin(angle) * clamped) / maxR;
+    };
 
-                stick.style.transform = `translate(${Math.cos(angle) * clamped}px, ${Math.sin(angle) * clamped}px)`;
-
-                input.moveX = (Math.cos(angle) * clamped) / maxR;
-                input.moveZ = -(Math.sin(angle) * clamped) / maxR;
-                break;
-            }
-        }
-    });
-
-    const resetStick = () => {
+    const stopDrag = () => {
+        dragging = false;
         stick.style.transform = `translate(0px, 0px)`;
         input.moveX = 0;
         input.moveZ = 0;
-        touchId = null;
     };
 
-    zone.addEventListener('touchend', resetStick);
-    zone.addEventListener('touchcancel', resetStick);
+    zone.addEventListener('touchstart', e => { e.preventDefault(); startDrag(e.changedTouches[0].clientX, e.changedTouches[0].clientY); });
+    zone.addEventListener('touchmove', e => { e.preventDefault(); moveDrag(e.changedTouches[0].clientX, e.changedTouches[0].clientY); });
+    zone.addEventListener('touchend', stopDrag);
+    zone.addEventListener('mousedown', e => startDrag(e.clientX, e.clientY));
+    window.addEventListener('mousemove', e => moveDrag(e.clientX, e.clientY));
+    window.addEventListener('mouseup', stopDrag);
 }
 
-// ========================================================
-// 11. 初期起動
-// ========================================================
 document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('high-score').innerText = highScore;
     setupInputs();
-    setupVrmLoader();
+    setupCreatorStudio();
     initScene();
 });
