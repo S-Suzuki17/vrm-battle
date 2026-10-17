@@ -1,59 +1,43 @@
-# 3D自作キャラバトル — Blender 5.2 & Unity 6 ハイクオリティ化計画
+# 3D自作キャラバトル — アップロード用オリジナル自作キャラクター制作 & マルチフォーマット対応計画
 
 ## 概要
-PCにインストールされている **Blender 5.2.2 LTS** と **Unity 6 (6000.2.14f1)** を活用し、プロシージャルなプリミティブ表現から「本格的な3Dモデリングアセット（`.glb` / `.fbx`）＋ ポストプロセス発光（UnrealBloom）＋ Unity 6 フルアクション＆ワンクリックシーン構築」へと全面アップグレードする。
+ユーザーが「自分のキャラとしてアップロード（ドラッグ＆ドロップ / ファイル選択）」してテスト・プレイできるよう、**Blender 5.2.2 LTS** でヒューマノイドボーン（Armature）と `VRMC_vrm` (VRM 1.0) メタデータを備えた **3体のオリジナル3Dキャラクター（`.vrm` / `.glb` / `.fbx` / `.png`）** を制作し、`custom_characters/` フォルダに出力する。
 
-## アーキテクチャ & パイプライン（Mermaid図）
+## 制作するアップロード用キャラクター3体（Mermaid図）
 
 ```mermaid
-flowchart LR
-    subgraph Blender ["🎨 Blender 5.2.2 LTS (Headless Python)"]
-        BpyScript["blender_generate_assets.py"]
-        Colosseum["colosseum_arena (.glb / .fbx)\n石畳・溝付き古代円柱・破断柱・篝火・断崖"]
-        Fighter["fighter_cyber_knight (.glb / .fbx)\nベベル装甲・バイザー・発光コア・関節階層"]
-        Weapons["武器モデル4種 (.glb / .fbx)\n大剣・SFスナイパー・ナックル・念動オーブ"]
-        
-        BpyScript --> Colosseum
-        BpyScript --> Fighter
-        BpyScript --> Weapons
+flowchart TD
+    subgraph CustomChars ["📁 custom_characters/ (アップロード用キャラ一式)"]
+        C1["① valkyrie_seraph (.vrm / .glb / .fbx / .png)\n【蒼穹の戦乙女 セラフ】\n白銀＆黄金の聖騎士・6枚の光翼・羽根ティアラ"]
+        C2["② crimson_samurai_kuro (.vrm / .glb / .fbx / .png)\n【紅蓮の剣豪 クロガネ】\n漆黒＆紅蓮の武者鎧・三日月兜角・大袖装甲"]
+        C3["③ golden_brawler_leo (.vrm / .glb / .fbx / .png)\n【黄金の覇王 レオ】\n黄金の獅子王冠・覇王マント・巨大覇気ガントレット"]
     end
 
-    subgraph WebApp ["🌐 Web 3D版 (Three.js + UnrealBloom + VRM)"]
-        GLTFLoader["GLTFLoader で Blender製モデル読込"]
-        PostProcess["EffectComposer + UnrealBloomPass (発光演出)"]
-        VRM["自作VRMアバター + Blender製武器装備"]
+    subgraph WebUpload ["🌐 Web版 アップロード機能"]
+        DND["ドラッグ＆ドロップ / ファイル選択\n(.vrm / .glb / .png / .jpg 全対応)"]
+        QuickBtn["ワンクリック試着プリセットボタン\n(ファイル選択なしでも即テスト可能)"]
+        UniqueSkill["キャラ固有の必殺技カットイン名＆オーラ色変化"]
     end
 
-    subgraph Unity6 ["🎮 Unity 6 (6000.2.14f1) パッケージ"]
-        SceneBuilder["UnlimitedColosseumSceneBuilder.cs (Editor拡張)\nワンクリックでステージ・UI・照明・マネージャー構築"]
-        ActionCtrl["UnityPlayerActionController.cs & UnityCpuAIController.cs\nUnity上で動くアンリミ風3Dアクション・コンボ・必殺技"]
-        SurvivalSys["SurvivalGameManager.cs & UserCharacterLoader.cs"]
+    subgraph UnityUpload ["🎮 Unity 6 アップロード機能"]
+        Loader["UserCharacterLoader.cs\n(.png スキン画像 & .fbx モデル対応)"]
     end
 
-    Colosseum --> GLTFLoader
-    Fighter --> GLTFLoader
-    Weapons --> GLTFLoader
-    
-    Colosseum --> SceneBuilder
-    Fighter --> SceneBuilder
-    Weapons --> SceneBuilder
-    SceneBuilder --> ActionCtrl
-    SceneBuilder --> SurvivalSys
+    CustomChars --> DND --> UniqueSkill
+    CustomChars --> QuickBtn
+    CustomChars --> Loader
 ```
 
 ## タスク進捗
 
-- [x] 1. **Blender 5.2 アセット生成スクリプト (`blender_generate_assets.py`) の作成と実行**:
-  - `colosseum_arena.glb` / `.fbx`: 彫刻柱、壊れた柱と瓦礫、階段、レリーフ床、篝火台座、断崖岩肌
-  - `fighter_cyber_knight.glb` / `.fbx`: 関節構造付きアーマーファイター
-  - `weapon_greatsword.glb`, `weapon_sniper_rifle.glb`, `weapon_psy_orb.glb` (および `.fbx`)
-- [x] 2. **Web版 (`main.js`, `style.css`, `index.html`) のクオリティアップ**:
-  - Blender製 `.glb` アセットの組み込み（ステージ・キャラクター・武器）
-  - `EffectComposer` + `UnrealBloomPass` による本格ポストプロセス発光（松明・必殺技・コア・斬撃）
-  - 攻撃ヒット演出・カメラワーク・UIディテールの強化
-- [x] 3. **Unity 6 フルアクション＆ワンクリックシーン構築スクリプト群の実装**:
-  - `UnityPlayerActionController.cs`: Unity 6上でWASD移動・3段コンボ・ガード・回避・必殺技を動かすプレイヤースクリプト
-  - `UnityCpuAIController.cs`: 連勝数スケーリングと連動するCPU戦闘AIスクリプト
-  - `UnlimitedColosseumSceneBuilder.cs` (Editor拡張): メニューから1クリックでBlenderモデル・アンリミ風HUD・ライティング・サバイバルシステムを全自動配置するエディタツール
-- [x] 4. **検証・ビルド確認 & GitHubプッシュ**:
-  - Blender出力モデルのファイル検証、ローカルサーバーでの配信確認、GitHubへのコミット＆プッシュ
+- [x] 1. **Blender 5.2 + VRM 1.0 ビルダースクリプト (`blender_generate_custom_chars.py`) の作成と実行**:
+  - ヒューマノイド Armature（`hips`, `spine`, `chest`, `head`, `leftUpperArm`, `rightUpperArm`, `leftUpperLeg`, `rightUpperLeg` 等）の構築とウェイト付け
+  - 3体（`valkyrie_seraph`, `crimson_samurai_kuro`, `golden_brawler_leo`）のモデリングと `.glb` / `.fbx` 出力
+  - GLBバイナリへの `VRMC_vrm` (VRM 1.0) 拡張・メタデータ・ボーンマッピング注入による `.vrm` ファイル生成
+  - Unity `UserCharacterLoader.cs` 用のカスタムキャラクターテクスチャ画像（`.png` 3種）の生成
+- [x] 2. **Web版 (`main.js`, `index.html`, `style.css`) のアップロード機能拡張**:
+  - `.vrm` に加え、`.glb` および `.png` / `.jpg`（テクスチャ動的貼り替え）のドラッグ＆ドロップ読み込みに対応
+  - 読み込んだキャラクターに応じた固有必殺技カットイン名・斬撃カラーの自動反映
+  - 画面下部のVRMドックに、`custom_characters/` 内の3体をすぐ試せるクイック召喚ボタンも併設
+- [x] 3. **動作確認 & GitHubへのコミット・プッシュ**:
+  - 生成された `.vrm` / `.glb` / `.fbx` / `.png` の検証、ローカルサーバー配信確認、GitHubプッシュ

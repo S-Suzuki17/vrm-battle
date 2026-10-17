@@ -102,15 +102,21 @@
         <!-- 浮動ダメージ数値コンテナ -->
         <div id="damage-numbers-layer"></div>
 
-        <!-- VRMドロップ＆ファイル選択バー（下部格納可能） -->
+        <!-- 自作キャラ・アップロード＆プリセットドック -->
         <div class="vrm-dock" id="drop-hint">
             <div class="vrm-dock-header">
-                <span>📁 自作VRM読込: 画面にD&D または</span>
-                <label for="vrm-file-input" class="browse-btn">ファイル選択</label>
-                <input type="file" id="vrm-file-input" accept=".vrm" style="display: none;">
-                <button id="reset-avatar-btn" class="dock-btn-small" style="display: none;">デフォルトに戻す</button>
+                <span>📁 自作キャラをD&D または</span>
+                <label for="vrm-file-input" class="browse-btn">ファイルを選択 (.vrm / .glb / .png)</label>
+                <input type="file" id="vrm-file-input" accept=".vrm,.glb,.png,.jpg,.jpeg" style="display: none;">
+                <div class="preset-char-group">
+                    <span class="preset-label">制作キャラ召喚:</span>
+                    <button class="dock-preset-btn" data-vrm="custom_characters/valkyrie_seraph.vrm" title="蒼穹の戦乙女 セラフ (.vrm)">👼 セラフ</button>
+                    <button class="dock-preset-btn" data-vrm="custom_characters/crimson_samurai_kuro.vrm" title="紅蓮の剣豪 クロガネ (.vrm)">👹 クロガネ</button>
+                    <button class="dock-preset-btn" data-vrm="custom_characters/golden_brawler_leo.vrm" title="黄金の覇王 レオ (.vrm)">🦁 レオ</button>
+                    <button id="reset-avatar-btn" class="dock-btn-small" style="display: none;">初期に戻す</button>
+                </div>
             </div>
-            <div class="vrm-status-line" id="avatar-status-text">現在: Blender 5.2 アーマーナイト (VRMドロップ対応)</div>
+            <div class="vrm-status-line" id="avatar-status-text">現在: Blender 5.2 アーマーナイト (custom_characters/ 内の .vrm / .png をD&D可能)</div>
         </div>
 
         <!-- スマホ向けバーチャルコントローラー -->

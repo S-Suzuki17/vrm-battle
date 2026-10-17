@@ -386,7 +386,7 @@ function setupCpuModel(styleInfo) {
 }
 
 // ========================================================
-// 4. VRMローカル読み込み機能
+// 4. 自作キャラマルチローダー (.vrm / .glb / .png / .jpg & プリセット対応)
 // ========================================================
 function setupVrmLoader() {
     const dropArea = document.getElementById('drop-area');
@@ -412,87 +412,164 @@ function setupVrmLoader() {
 
     dropArea.addEventListener('drop', (e) => {
         const files = e.dataTransfer.files;
-        if (files && files.length > 0) loadVrmFile(files[0]);
+        if (files && files.length > 0) handleUploadedFile(files[0]);
     });
 
     fileInput.addEventListener('change', (e) => {
-        if (e.target.files && e.target.files.length > 0) loadVrmFile(e.target.files[0]);
+        if (e.target.files && e.target.files.length > 0) handleUploadedFile(e.target.files[0]);
+    });
+
+    // 制作した3体のアップロード用キャラクター (.vrm) のワンクリック召喚ボタン
+    document.querySelectorAll('.dock-preset-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const vrmPath = btn.getAttribute('data-vrm');
+            if (vrmPath) loadCharacterFromUrl(vrmPath, vrmPath.split('/').pop());
+        });
     });
 
     resetBtn.addEventListener('click', restoreDefaultPlayer);
 }
 
-function loadVrmFile(file) {
-    if (!file.name.toLowerCase().endsWith('.vrm')) {
-        alert('⚠️ .vrm 形式のファイルを選択してください。');
-        return;
-    }
+function handleUploadedFile(file) {
+    const lower = file.name.toLowerCase();
+    const blobUrl = URL.createObjectURL(file);
 
+    if (lower.endsWith('.vrm') || lower.endsWith('.glb')) {
+        loadCharacterFromUrl(blobUrl, file.name);
+    } else if (lower.endsWith('.png') || lower.endsWith('.jpg') || lower.endsWith('.jpeg')) {
+        applyCustomSkinTexture(blobUrl, file.name);
+    } else {
+        alert('⚠️ .vrm / .glb / .png / .jpg 形式のファイルを選択してください。');
+    }
+}
+
+function loadCharacterFromUrl(url, fileName) {
     const overlay = document.getElementById('loading-overlay');
     const loadingText = document.getElementById('loading-text');
-    loadingText.innerText = `VRM召喚中: ${file.name}...`;
+    loadingText.innerText = `自作キャラ召喚中: ${fileName}...`;
     overlay.style.display = 'flex';
 
-    const blobUrl = URL.createObjectURL(file);
     const loader = new GLTFLoader();
     loader.register(parser => new VRMLoaderPlugin(parser));
 
     loader.load(
-        blobUrl,
+        url,
         gltf => {
             const vrm = gltf.userData.vrm;
-            if (!vrm) {
-                alert('VRM解析エラー');
-                overlay.style.display = 'none';
-                return;
-            }
+            const modelRoot = vrm ? vrm.scene : gltf.scene;
 
-            VRMUtils.removeUnnecessaryVertices(gltf.scene);
-            VRMUtils.removeUnnecessaryJoints(gltf.scene);
+            if (vrm) {
+                VRMUtils.removeUnnecessaryVertices(gltf.scene);
+                VRMUtils.removeUnnecessaryJoints(gltf.scene);
+            }
 
             if (player.vrm) {
                 player.group.remove(player.vrm.scene);
                 VRMUtils.deepDispose(player.vrm.scene);
+                player.vrm = null;
+            }
+            if (player.customGlb) {
+                player.group.remove(player.customGlb);
+                player.customGlb = null;
             }
             if (player.mesh) player.mesh.visible = false;
 
-            player.vrm = vrm;
-            player.isVrm = true;
-            vrm.scene.rotation.y = Math.PI;
-            vrm.scene.traverse(obj => {
+            modelRoot.traverse(obj => {
                 if (obj.isMesh) {
                     obj.castShadow = true;
                     obj.receiveShadow = true;
                 }
             });
 
-            try {
-                if (vrm.humanoid) {
-                    const lArm = vrm.humanoid.getNormalizedBoneNode('leftUpperArm');
-                    const rArm = vrm.humanoid.getNormalizedBoneNode('rightUpperArm');
-                    if (lArm) lArm.rotation.z = Math.PI / 3.2;
-                    if (rArm) rArm.rotation.z = -Math.PI / 3.2;
+            // Blender出力の自作キャラか外部VRMかに応じて向きとボーンを設定
+            const isOurCustomChar = fileName.includes('valkyrie_seraph') || fileName.includes('crimson_samurai') || fileName.includes('golden_brawler');
+            player.isCustomRig = isOurCustomChar;
+
+            if (vrm) {
+                player.vrm = vrm;
+                player.isVrm = true;
+                vrm.scene.rotation.y = isOurCustomChar ? 0 : Math.PI;
+                if (!isOurCustomChar && vrm.humanoid) {
+                    try {
+                        const lArm = vrm.humanoid.getNormalizedBoneNode('leftUpperArm');
+                        const rArm = vrm.humanoid.getNormalizedBoneNode('rightUpperArm');
+                        if (lArm) lArm.rotation.z = Math.PI / 3.2;
+                        if (rArm) rArm.rotation.z = -Math.PI / 3.2;
+                    } catch (err) {}
                 }
-            } catch (err) {}
+                player.group.add(vrm.scene);
+            } else {
+                player.customGlb = modelRoot;
+                player.isVrm = true;
+                player.group.add(modelRoot);
+            }
 
-            player.group.add(vrm.scene);
+            // カスタム関節ノードの抽出（歩行・攻撃スイング連動）
+            const customJoints = {};
+            modelRoot.traverse(c => {
+                if (c.name === "leftUpperArm" || c.name === "LeftArm") customJoints.leftArm = c;
+                if (c.name === "rightUpperArm" || c.name === "RightArm") customJoints.rightArm = c;
+                if (c.name === "leftUpperLeg" || c.name === "LeftLeg") customJoints.leftLeg = c;
+                if (c.name === "rightUpperLeg" || c.name === "RightLeg") customJoints.rightLeg = c;
+            });
+            player.customJoints = customJoints;
 
-            const title = vrm.meta?.title || file.name.replace('.vrm', '');
-            document.getElementById('player-name').innerText = title;
-            document.getElementById('player-avatar-icon').innerText = '🦸';
-            document.getElementById('avatar-status-text').innerText = `✅ 自作VRM読込中: ${title}`;
+            // メタデータ＆固有必殺技名の反映
+            const metaName = vrm?.meta?.name || vrm?.meta?.title || fileName.replace(/\.(vrm|glb)$/i, '');
+            let iconSym = '🦸';
+            let skillName = '🔥 覇皇烈空閃 (EX SPECIAL) 🔥';
+            if (fileName.includes('valkyrie_seraph') || metaName.includes('セラフ')) {
+                iconSym = '👼';
+                skillName = '🌟 聖裁・セラフィック・ノヴァ 🌟';
+            } else if (fileName.includes('crimson_samurai') || metaName.includes('クロガネ')) {
+                iconSym = '👹';
+                skillName = '⚡ 秘剣・紅蓮一閃 ⚡';
+            } else if (fileName.includes('golden_brawler') || metaName.includes('レオ')) {
+                iconSym = '🦁';
+                skillName = '🔥 覇王・獅子奮迅撃 🔥';
+            }
+            player.skillName = skillName;
+
+            document.getElementById('player-name').innerText = metaName;
+            document.getElementById('player-avatar-icon').innerText = iconSym;
+            document.getElementById('avatar-status-text').innerText = `✅ 自作キャラ召喚中: ${metaName} (必殺技: ${skillName})`;
             document.getElementById('reset-avatar-btn').style.display = 'inline-block';
             overlay.style.display = 'none';
 
-            showAnnouncement("VRM アバター召喚完了！", "#00d2d3");
+            showAnnouncement(`${metaName} 参戦！`, "#00d2d3");
         },
         null,
         err => {
             console.error(err);
-            alert('VRM読み込みエラー: ' + err.message);
+            alert('モデル読み込みエラー: ' + err.message);
             overlay.style.display = 'none';
         }
     );
+}
+
+// Unity版 UserCharacterLoader と同様の PNG/JPG テクスチャ動的適用機能
+function applyCustomSkinTexture(blobUrl, fileName) {
+    const texLoader = new THREE.TextureLoader();
+    texLoader.load(blobUrl, (texture) => {
+        texture.colorSpace = THREE.SRGBColorSpace;
+        restoreDefaultPlayer();
+        if (player.mesh) {
+            player.mesh.traverse(child => {
+                if (child.isMesh && child.material && child.material.name.includes("ArmorMain")) {
+                    child.material = child.material.clone();
+                    child.material.map = texture;
+                    child.material.color.setHex(0xffffff);
+                    child.material.needsUpdate = true;
+                }
+            });
+        }
+        const skinTitle = fileName.replace(/\.(png|jpg|jpeg)$/i, '');
+        document.getElementById('player-name').innerText = `Custom: ${skinTitle}`;
+        document.getElementById('player-avatar-icon').innerText = '🎨';
+        document.getElementById('avatar-status-text').innerText = `✅ カスタム画像スキン適用中: ${fileName}`;
+        document.getElementById('reset-avatar-btn').style.display = 'inline-block';
+        showAnnouncement("カスタム画像テクスチャ適用完了！", "#ffd32a");
+    });
 }
 
 function restoreDefaultPlayer() {
@@ -500,13 +577,19 @@ function restoreDefaultPlayer() {
         player.group.remove(player.vrm.scene);
         VRMUtils.deepDispose(player.vrm.scene);
         player.vrm = null;
-        player.isVrm = false;
     }
-    if (player.mesh) player.mesh.visible = true;
+    if (player.customGlb) {
+        player.group.remove(player.customGlb);
+        player.customGlb = null;
+    }
+    player.isVrm = false;
+    player.customJoints = null;
+    player.skillName = "🔥 覇皇烈空閃 (EX SPECIAL) 🔥";
+    setupPlayerMeshFromBlender();
 
     document.getElementById('player-name').innerText = "Cyber Knight";
     document.getElementById('player-avatar-icon').innerText = '⚔️';
-    document.getElementById('avatar-status-text').innerText = "現在: Blender 5.2 アーマーナイト (VRMドロップ対応)";
+    document.getElementById('avatar-status-text').innerText = "現在: Blender 5.2 アーマーナイト (custom_characters/ 内の .vrm / .png をD&D可能)";
     document.getElementById('reset-avatar-btn').style.display = 'none';
     showAnnouncement("デフォルトアーマーに戻しました", "#ced6e0");
 }
@@ -678,7 +761,7 @@ function performPlayerSpecial() {
     const cutinChar = document.getElementById('cutin-char');
     const cutinSkill = document.getElementById('cutin-skill');
     cutinChar.innerText = document.getElementById('player-name').innerText.toUpperCase();
-    cutinSkill.innerText = "🔥 覇皇烈空閃 (EX SPECIAL) 🔥";
+    cutinSkill.innerText = player.skillName || "🔥 覇皇烈空閃 (EX SPECIAL) 🔥";
     cutin.classList.add('active');
 
     setTimeout(() => {
@@ -978,7 +1061,7 @@ function updateCpuAI(dt) {
 // Blender製ファイターの関節（腕・脚）のプロシージャルアニメーション
 function animateFighterJoints(entity, dt, isMoving) {
     entity.animTime += dt * 11.0;
-    const j = entity.joints;
+    const j = entity.customJoints || entity.joints;
     if (!j) return;
 
     if (j.leftLeg && j.rightLeg) {
@@ -1103,13 +1186,13 @@ function animate() {
 
     player.group.position.copy(player.position);
     // Blenderモデルは前方が -Y -> Three.js変換時に +Z を向くようオフセット調整
-    player.group.rotation.y = player.rotationY + (player.isVrm ? 0 : Math.PI);
+    player.group.rotation.y = player.rotationY + (player.isVrm && !player.isCustomRig ? 0 : Math.PI);
 
     cpu.group.position.copy(cpu.position);
     cpu.group.rotation.y = cpu.rotationY + Math.PI;
 
     // 関節アニメーション更新
-    if (player.vrm) {
+    if (player.vrm && !player.isCustomRig) {
         player.vrm.update(dt);
         if (player.vrm.humanoid && playerMoving) {
             player.animTime += dt * 10;
@@ -1119,6 +1202,7 @@ function animate() {
             if (rLeg) rLeg.rotation.x = -Math.sin(player.animTime) * 0.45;
         }
     } else {
+        if (player.vrm) player.vrm.update(dt);
         animateFighterJoints(player, dt, playerMoving);
     }
 
