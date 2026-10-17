@@ -1,0 +1,207 @@
+15:15:10 - tripo_addon - [task.py:21] - INFO - WebSocket server started on port 60600
+15:15:10 - tripo_addon - [ws_server.py:126] - INFO - WebSocket server running on ws://127.0.0.1:60600
+15:15:10 - tripo_addon - [ws_server.py:133] - INFO - Heartbeat monitoring started (timeout: 120s)
+15:15:10 - tripo_addon - [ws_server.py:90] - INFO - Stopping WebSocket server...
+15:15:10 - tripo_addon - [task.py:27] - INFO - WebSocket server stop requested
+15:15:10 - tripo_addon - [ws_server.py:77] - INFO - Event loop closed
+00:03.734  cycles           | WARNING CUEW initialization failed: Error opening the library
+00:03.734  cycles           | WARNING HIPEW initialization failed: Error opening HIP dynamic library
+C:\Users\souta\vrm-battle\blender_city_generator.py:354: DeprecationWarning: 'World.use_nodes' is expected to be removed in Blender 6.0
+  world.use_nodes = True
+C:\Users\souta\vrm-battle\blender_city_generator.py:72: DeprecationWarning: 'Material.use_nodes' is expected to be removed in Blender 6.0
+  mat.use_nodes = True
+C:\Users\souta\vrm-battle\blender_city_generator.py:55: DeprecationWarning: 'Material.use_nodes' is expected to be removed in Blender 6.0
+  mat.use_nodes = True
+00:07.422  render           | Saved: 'C:\Users\souta\vrm-battle\assets\renders\cycles_city_sky.png'
+00:08.094  render           | Saved: 'C:\Users\souta\vrm-battle\assets\renders\cycles_city_showcase.png'
+Reloading external rigs...
+Reloading external metarigs...
+[Tripo3D] Log file: C:\Users\souta\AppData\Local\Temp\tripo3d_blender_bridge.log
+Rendered Cycles 360 City Sky Environment!
+Rendered Cycles City Showcase!
+INFO Draco is available, use library at C:\Program Files\WindowsApps\BlenderFoundation.Blender_5.2.2.0_x64__ppwjx1n5r4v9t\Blender\5.2\scripts\addons_core\io_scene_gltf2\bf_intern_draco_bridge.dll
+INFO MeshOptimizer is available, use library at C:\Program Files\WindowsApps\BlenderFoundation.Blender_5.2.2.0_x64__ppwjx1n5r4v9t\Blender\5.2\scripts\addons_core\io_scene_gltf2\bf_intern_meshopt_bridge.dll
+15:15:16 | INFO: Starting glTF 2.0 export
+15:15:16 | INFO: Extracting primitive: Cone
+15:15:16 | INFO: Primitives created: 1
+15:15:16 | INFO: Extracting primitive: Cone.001
+15:15:16 | INFO: Primitives created: 1
+15:15:16 | INFO: Extracting primitive: Cone.002
+15:15:16 | INFO: Primitives created: 1
+15:15:16 | INFO: Extracting primitive: Cone.003
+15:15:16 | INFO: Primitives created: 1
+15:15:16 | INFO: Extracting primitive: Cone.004
+15:15:16 | INFO: Primitives created: 1
+15:15:16 | INFO: Extracting primitive: Cone.005
+15:15:16 | INFO: Primitives created: 1
+15:15:16 | INFO: Extracting primitive: Cube
+15:15:16 | INFO: Primitives created: 1
+15:15:16 | INFO: Extracting primitive: Cube.001
+15:15:16 | INFO: Primitives created: 1
+15:15:16 | INFO: Extracting primitive: Cube.002
+15:15:16 | INFO: Primitives created: 1
+15:15:16 | INFO: Extracting primitive: Cube.003
+15:15:16 | INFO: Primitives created: 1
+15:15:16 | INFO: Extracting primitive: Cube.004
+15:15:16 | INFO: Primitives created: 1
+15:15:16 | INFO: Extracting primitive: Cube.005
+15:15:16 | INFO: Primitives created: 1
+15:15:16 | INFO: Extracting primitive: Cube.006
+15:15:16 | INFO: Primitives created: 1
+15:15:16 | INFO: Extracting primitive: Cube.007
+15:15:16 | INFO: Primitives created: 1
+15:15:16 | INFO: Extracting primitive: Cube.008
+15:15:16 | INFO: Primitives created: 1
+15:15:16 | INFO: Extracting primitive: Cube.009
+15:15:16 | INFO: Primitives created: 1
+15:15:16 | INFO: Extracting primitive: Cube.010
+15:15:16 | INFO: Primitives created: 1
+15:15:16 | INFO: Extracting primitive: Cube.011
+15:15:16 | INFO: Primitives created: 1
+15:15:16 | INFO: Extracting primitive: Cube.012
+15:15:16 | INFO: Primitives created: 1
+15:15:16 | INFO: Extracting primitive: Cube.013
+15:15:16 | INFO: Primitives created: 1
+15:15:16 | INFO: Extracting primitive: Cube.014
+15:15:16 | INFO: Primitives created: 1
+15:15:16 | INFO: Extracting primitive: Cube.015
+15:15:16 | INFO: Primitives created: 1
+15:15:16 | INFO: Extracting primitive: Cube.016
+15:15:16 | INFO: Primitives created: 1
+15:15:16 | INFO: Extracting primitive: Cube.017
+15:15:16 | INFO: Primitives created: 1
+15:15:16 | INFO: Extracting primitive: Cube.018
+15:15:16 | INFO: Primitives created: 1
+15:15:16 | INFO: Extracting primitive: Cube.019
+15:15:16 | INFO: Primitives created: 1
+15:15:16 | INFO: Extracting primitive: Cube.020
+15:15:16 | INFO: Primitives created: 1
+15:15:16 | INFO: Extracting primitive: Cube.021
+15:15:16 | INFO: Primitives created: 1
+15:15:16 | INFO: Extracting primitive: Cube.022
+15:15:16 | INFO: Primitives created: 1
+15:15:16 | INFO: Extracting primitive: Cube.023
+15:15:16 | INFO: Primitives created: 1
+15:15:16 | INFO: Extracting primitive: Cube.024
+15:15:16 | INFO: Primitives created: 1
+15:15:16 | INFO: Extracting primitive: Cube.025
+15:15:16 | INFO: Primitives created: 1
+15:15:16 | INFO: Extracting primitive: Cube.026
+15:15:16 | INFO: Primitives created: 1
+15:15:16 | INFO: Extracting primitive: Cube.027
+15:15:16 | INFO: Primitives created: 1
+15:15:16 | INFO: Extracting primitive: Cube.028
+15:15:16 | INFO: Primitives created: 1
+15:15:16 | INFO: Extracting primitive: Cube.029
+15:15:16 | INFO: Primitives created: 1
+15:15:16 | INFO: Extracting primitive: Cube.030
+15:15:16 | INFO: Primitives created: 1
+15:15:16 | INFO: Extracting primitive: Cube.031
+15:15:16 | INFO: Primitives created: 1
+15:15:16 | INFO: Extracting primitive: Cube.032
+15:15:16 | INFO: Primitives created: 1
+15:15:16 | INFO: Extracting primitive: Cube.033
+15:15:16 | INFO: Primitives created: 1
+15:15:16 | INFO: Extracting primitive: Cube.034
+15:15:16 | INFO: Primitives created: 1
+15:15:16 | INFO: Extracting primitive: Cube.035
+15:15:16 | INFO: Primitives created: 1
+15:15:16 | INFO: Extracting primitive: Cube.036
+15:15:16 | INFO: Primitives created: 1
+15:15:16 | INFO: Extracting primitive: Cube.037
+15:15:16 | INFO: Primitives created: 1
+15:15:16 | INFO: Extracting primitive: Cube.038
+15:15:16 | INFO: Primitives created: 1
+15:15:16 | INFO: Extracting primitive: Cube.039
+15:15:16 | INFO: Primitives created: 1
+15:15:16 | INFO: Extracting primitive: Cube.040
+15:15:16 | INFO: Primitives created: 1
+15:15:16 | INFO: Extracting primitive: Cube.041
+15:15:16 | INFO: Primitives created: 1
+15:15:16 | INFO: Extracting primitive: Cube.042
+15:15:16 | INFO: Primitives created: 1
+15:15:16 | INFO: Extracting primitive: Cube.043
+15:15:16 | INFO: Primitives created: 1
+15:15:16 | INFO: Extracting primitive: Cube.044
+15:15:16 | INFO: Primitives created: 1
+15:15:16 | INFO: Extracting primitive: Cube.045
+15:15:16 | INFO: Primitives created: 1
+15:15:16 | INFO: Extracting primitive: Cube.046
+15:15:16 | INFO: Primitives created: 1
+15:15:16 | INFO: Extracting primitive: Cube.047
+15:15:16 | INFO: Primitives created: 1
+15:15:16 | INFO: Extracting primitive: Cube.048
+15:15:16 | INFO: Primitives created: 1
+15:15:16 | INFO: Extracting primitive: Cube.049
+15:15:16 | INFO: Primitives created: 1
+15:15:16 | INFO: Extracting primitive: Cube.050
+15:15:16 | INFO: Primitives created: 1
+15:15:16 | INFO: Extracting primitive: Cube.051
+15:15:16 | INFO: Primitives created: 1
+15:15:16 | INFO: Extracting primitive: Cube.052
+15:15:16 | INFO: Primitives created: 1
+15:15:16 | INFO: Extracting primitive: Cube.053
+15:15:16 | INFO: Primitives created: 1
+15:15:16 | INFO: Extracting primitive: Cube.054
+15:15:16 | INFO: Primitives created: 1
+15:15:16 | INFO: Extracting primitive: Cube.055
+15:15:16 | INFO: Primitives created: 1
+15:15:16 | INFO: Extracting primitive: Cube.056
+15:15:16 | INFO: Primitives created: 1
+15:15:16 | INFO: Extracting primitive: Cube.057
+15:15:16 | INFO: Primitives created: 1
+15:15:16 | INFO: Extracting primitive: Cube.058
+15:15:16 | INFO: Primitives created: 1
+15:15:16 | INFO: Extracting primitive: Cube.059
+15:15:16 | INFO: Primitives created: 1
+15:15:16 | INFO: Extracting primitive: Cube.060
+15:15:16 | INFO: Primitives created: 1
+15:15:16 | INFO: Extracting primitive: Cube.061
+15:15:16 | INFO: Primitives created: 1
+15:15:16 | INFO: Extracting primitive: Cube.062
+15:15:16 | INFO: Primitives created: 1
+15:15:16 | INFO: Extracting primitive: Cube.063
+15:15:16 | INFO: Primitives created: 1
+15:15:16 | INFO: Extracting primitive: Cylinder
+15:15:16 | INFO: Primitives created: 1
+15:15:16 | INFO: Extracting primitive: Cylinder.001
+15:15:16 | INFO: Primitives created: 1
+15:15:16 | INFO: Extracting primitive: Sphere
+15:15:16 | INFO: Primitives created: 1
+15:15:16 | INFO: Extracting primitive: Sphere.001
+15:15:16 | INFO: Primitives created: 1
+15:15:16 | INFO: Extracting primitive: Sphere.002
+15:15:16 | INFO: Primitives created: 1
+15:15:16 | INFO: Extracting primitive: Sphere.003
+15:15:16 | INFO: Primitives created: 1
+15:15:16 | INFO: Extracting primitive: Sphere.004
+15:15:16 | INFO: Primitives created: 1
+15:15:16 | INFO: Extracting primitive: Sphere.005
+15:15:16 | INFO: Primitives created: 1
+15:15:16 | INFO: Extracting primitive: Sphere.006
+15:15:16 | INFO: Primitives created: 1
+15:15:16 | INFO: Extracting primitive: Sphere.007
+15:15:16 | INFO: Primitives created: 1
+15:15:16 | INFO: Extracting primitive: Sphere.008
+15:15:16 | INFO: Primitives created: 1
+15:15:16 | INFO: Extracting primitive: Sphere.009
+15:15:16 | INFO: Primitives created: 1
+15:15:16 | INFO: Extracting primitive: Sphere.010
+15:15:16 | INFO: Primitives created: 1
+15:15:16 | INFO: Extracting primitive: Sphere.011
+15:15:16 | INFO: Primitives created: 1
+15:15:16 | INFO: Extracting primitive: Sphere.012
+15:15:16 | INFO: Primitives created: 1
+15:15:16 | INFO: Extracting primitive: Sphere.013
+15:15:16 | INFO: Primitives created: 1
+15:15:16 | INFO: Extracting primitive: Sphere.014
+15:15:16 | INFO: Primitives created: 1
+15:15:16 | INFO: Extracting primitive: Sphere.015
+15:15:16 | INFO: Primitives created: 1
+15:15:16 | INFO: Finished glTF 2.0 export in 0.34304046630859375 s
+
+Exported 3D City Stage GLB: C:\Users\souta\vrm-battle\assets\models\tokyo_city_stage.glb
+ALL BLENDER 5.2 TOKYO CITY ASSETS COMPLETE!
+Blender 5.2.2 LTS (hash d13f752e3b9c built 2026-09-15 01:37:04)
+
+Blender quit

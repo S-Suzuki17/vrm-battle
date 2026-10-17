@@ -42,7 +42,7 @@ const CPU_BOSS_TYPES = [
         accentColor: 0xffdd59,
         scale: 1.28,
         poiseMax: 110,
-        presetSliders: { atk: 36, range: 34, stun: 18, atkspd: 6, spd: 6 },
+        presetSliders: { atk: 6, range: 5, spd: 1, stun: 2, atkspd: 1 },
         presetGambits: [
             { cond: "sp_50", act: "ult_ex" },
             { cond: "dist_near", act: "atk_launch" },
@@ -61,7 +61,7 @@ const CPU_BOSS_TYPES = [
         accentColor: 0xff9f1a,
         scale: 1.35,
         poiseMax: 125,
-        presetSliders: { atk: 16, range: 14, stun: 26, atkspd: 26, spd: 18 },
+        presetSliders: { atk: 3, range: 2, spd: 5, stun: 2, atkspd: 3 },
         presetGambits: [
             { cond: "enemy_stun", act: "skill_arts" },
             { cond: "dist_near", act: "atk_rush" },
@@ -80,7 +80,7 @@ const CPU_BOSS_TYPES = [
         accentColor: 0x00f2fe,
         scale: 1.38,
         poiseMax: 140,
-        presetSliders: { atk: 24, range: 28, stun: 32, atkspd: 8, spd: 8 },
+        presetSliders: { atk: 3, range: 3, spd: 1, stun: 6, atkspd: 2 },
         presetGambits: [
             { cond: "enemy_attack", act: "guard_counter" },
             { cond: "sp_20", act: "skill_arts" },
@@ -99,7 +99,7 @@ const CPU_BOSS_TYPES = [
         accentColor: 0xfbc531,
         scale: 1.22,
         poiseMax: 115,
-        presetSliders: { atk: 22, range: 24, stun: 28, atkspd: 14, spd: 12 },
+        presetSliders: { atk: 3, range: 3, spd: 2, stun: 5, atkspd: 2 },
         presetGambits: [
             { cond: "enemy_attack", act: "guard_counter" },
             { cond: "sp_50", act: "ult_ex" },
@@ -118,7 +118,7 @@ const CPU_BOSS_TYPES = [
         accentColor: 0xff5e57,
         scale: 1.18,
         poiseMax: 95,
-        presetSliders: { atk: 14, range: 16, stun: 20, atkspd: 28, spd: 22 },
+        presetSliders: { atk: 2, range: 2, spd: 6, stun: 1, atkspd: 4 },
         presetGambits: [
             { cond: "sp_50", act: "ult_ex" },
             { cond: "enemy_guard", act: "atk_launch" },
@@ -145,19 +145,20 @@ let highScore = Number(localStorage.getItem("battle_high_score") || 0);
 let roundTimer = 99;
 let roundTimerAccum = 0;
 let isGameActive = true;
-let isAutoBattle = true;          // 3Dオート対戦（監督・軍師モード）デフォルトON
-let isCinematicSpectator = false; // UI非表示・シネマティック観戦モード
+let isAutoBattle = true;          // 3Dオート街バトル（監督・軍師モード）デフォルトON
+let isCinematicSpectator = false; // UI非表示・シネマティック都市観戦モード
 let comboHits = 0;
 let comboDamage = 0;
 let comboResetTimer = null;
 
-// 敗北時アナリティクス計測用
+// 敗北時アナリティクス＆グラフ/ループ計測用
 const battleStats = {
     damageDealt: 0,
     damageTaken: 0,
     stunsInflicted: 0,
     maxCombo: 0,
     skillsUsed: 0,
+    totalBattles: Number(localStorage.getItem("city_total_battles") || 1),
     lastEnemyMove: "豪腕クラッシュ"
 };
 
@@ -165,7 +166,7 @@ const battleStats = {
 let scene, camera, renderer, composer, bloomPass, clock;
 let toonGradientMap = null;
 let cyclesEnvMap = null;
-let arenaRadius = 10.2;
+let arenaRadius = 12.5; // 渋谷スクランブル交差点・都市フィールド半径
 let effectsList = [];
 let projectilesList = [];
 let playerAuraParticles = [];
@@ -177,7 +178,7 @@ let isKoSlowMo = false;
 let slowMoTimer = 0;
 let cinematicCameraMode = null;
 
-// プレイヤー管理オブジェクト（キャラデザ・動き・VFX・AI作戦・パラメータ配分統合）
+// プレイヤー管理オブジェクト（キャラデザ・コンボ・必殺技・5種トークン配分・AIガンビット統合）
 const player = {
     group: null,
     animPivot: null,
@@ -205,22 +206,35 @@ const player = {
         auraColor: "#00f2fe"
     },
 
-    // ② 動き（モーション型） ＆ ③ 技エフェクト属性
+    // ② 動き（モーション型） ＆ コンボ攻撃3段ルート ＆ 必殺技フレームワーク
     motionType: "heavy_buster",    // heavy_buster, speed_rush, acrobat_martial, magic_shooter
     vfxElement: "plasma_cyan",     // plasma_cyan, flame_crimson, holy_astral, void_gravity
     skillName: "⚡ 蒼雷・神速烈空閃 ⚡",
     themeColor: 0x00f2fe,
+    comboRoute: {
+        starter: "flash_step",     // flash_step, armor_impact, sonic_jab, mirage_kick
+        linker: "spiral_slash",    // spiral_slash, multi_flurry, guard_crush, plasma_wave
+        finisher: "sky_upper"      // sky_upper, meteor_smash, dimension_thrust, cyclone_burst
+    },
+    ultConfig: {
+        form: "meteor_drop",       // meteor_drop, dimension_slash, orbital_laser, omniscience_rush
+        trait: "vampire_heal"      // vampire_heal, guard_shatter, overdrive_buff, execute_bonus
+    },
 
-    // ④ 決められた範囲内で配分された各種パラメータ（合計100PT上限）
-    sliderPts: { atk: 20, range: 20, stun: 20, atkspd: 20, spd: 20 },
-    atkScale: 1.05,       // 攻撃力倍率 [0.85x 〜 1.40x]
-    attackRange: 3.4,     // 通常技範囲 [2.4m 〜 4.5m]
-    specialRange: 11.5,   // 必殺技範囲 [m]
-    stunPower: 1.12,      // ひるませ力・崩し [0.80x 〜 1.50x]
-    atkSpeed: 1.08,       // 攻撃速度倍率 [0.85x 〜 1.35x]
-    speed: 6.3,           // 移動速度 [5.2 〜 8.0]
+    // ④ 5種類のトークン配分システム（合計15トークン上限・各最大6）
+    sliderPts: { atk: 3, range: 3, spd: 3, stun: 3, atkspd: 3 },
+    atkScale: 1.18,       // 🔴 剛撃トークン: 攻撃力倍率 [0.85x 〜 1.51x]
+    attackRange: 3.6,     // 🟡 覇道トークン: 技範囲 [2.4m 〜 4.8m]
+    specialRange: 12.0,   // 必殺技範囲 [m]
+    stunPower: 1.21,      // 🟡 覇道トークン: 崩し・ひるませ力 [0.85x 〜 1.57x]
+    atkSpeed: 1.12,       // 🔵 蒼迅トークン: 攻撃速度倍率 [0.85x 〜 1.39x]
+    speed: 6.65,          // 🔵 蒼迅トークン: 街中移動速度 [5.0 〜 8.3]
+    hpRegen: 12,          // 🟢 堅守トークン: 秒間HPリジェネ [+0 〜 +24 HP/s]
+    spRegenMult: 1.54,    // 🟣 魔導トークン: SP獲得速度倍率 [1.0x 〜 2.08x]
+    comboBonus: 0.05,     // 🟣 魔導トークン: コンボ1HITあたりのダメージ加算率
+    overdriveTimer: 0,    // 10秒覚醒バフ残り時間
 
-    // ⑤ オート対戦用 AI作戦ガンビット (IF条件 + THEN行動 × 3スロット)
+    // ⑤ オート街バトル用 AI作戦ガンビット (IF条件 + THEN行動 × 3スロット)
     gambits: [
         { cond: "sp_50", act: "ult_ex" },
         { cond: "enemy_stun", act: "skill_arts" },
@@ -229,11 +243,11 @@ const player = {
     aiDecisionTimer: 0,
 
     // バトルリアルタイム状態
-    hp: 1000,
-    maxHp: 1000,
+    hp: 1360,
+    maxHp: 1360,
     sp: 60,
     maxSp: 100,
-    position: new THREE.Vector3(-3.8, 0, 0.8),
+    position: new THREE.Vector3(-4.2, 0, 1.0),
     airY: 0,
     airVelY: 0,
     rotationY: Math.PI * 0.45,
@@ -348,7 +362,7 @@ function createOutlinedPart(geometry, material, outlineThickness = 0.024) {
 }
 
 /**
- * Blender 5.2 Cycles レンダリング画像（証明書カード＆ポートレート用）をプリロード
+ * Blender 5.2 Cycles レンダリング画像（都市ショーケース・証明書カード・ポートレート用）をプリロード
  */
 function preloadCyclesAssets() {
     const loadImg = (src, key) => {
@@ -357,13 +371,13 @@ function preloadCyclesAssets() {
         img.onload = () => { cyclesImages[key] = img; };
         img.src = src;
     };
-    loadImg('./assets/renders/cycles_battle_showcase.png', 'showcase');
+    loadImg('./assets/renders/cycles_city_showcase.png', 'showcase');
     loadImg('./assets/renders/cycles_hero_portrait.png', 'heroPortrait');
     loadImg('./assets/renders/cycles_oni_portrait.png', 'oniPortrait');
 }
 
 // ========================================================
-// 4. Three.js シーン初期化 ＆ Blender Cycles 絶景コロシアム構築
+// 4. Three.js シーン初期化 ＆ Blender Cycles 東京・渋谷3D都市バトルフィールド構築
 // ========================================================
 async function initScene() {
     preloadCyclesAssets();
@@ -374,11 +388,11 @@ async function initScene() {
     const height = container.clientHeight || window.innerHeight;
 
     scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x5ea8dc);
-    scene.fog = new THREE.FogExp2(0x8ecae6, 0.0075);
+    scene.background = new THREE.Color(0x162238);
+    scene.fog = new THREE.FogExp2(0x1a2842, 0.0052);
 
-    camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 320);
-    camera.position.set(-5.8, 3.3, 6.2);
+    camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 360);
+    camera.position.set(-6.5, 3.6, 7.2);
 
     renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
     renderer.setSize(width, height);
@@ -386,37 +400,37 @@ async function initScene() {
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.18;
+    renderer.toneMappingExposure = 1.22;
     container.appendChild(renderer.domElement);
 
-    // ポストプロセス（UnrealBloomPass による Cycles 発光・斬撃・魔法陣の輝き強調）
+    // ポストプロセス（UnrealBloomPass によるネオン看板・街灯・斬撃エフェクトの輝き強調）
     composer = new EffectComposer(renderer);
     const renderPass = new RenderPass(scene, camera);
     composer.addPass(renderPass);
 
     bloomPass = new UnrealBloomPass(
         new THREE.Vector2(width, height),
-        0.38,  // strength: 剣閃やルーン魔法陣が美しく輝く強度
-        0.55,  // radius
-        0.78   // threshold: 高輝度エフェクトとCycles反射ハイライトのみを発光
+        0.42,  // strength: 渋谷のネオン看板とコンボ剣閃が美しく発光する強度
+        0.58,  // radius
+        0.76   // threshold
     );
     composer.addPass(bloomPass);
 
     clock = new THREE.Clock();
 
-    // 明るい昼の太陽光ライティング ＋ リムライト2灯（Cycles風3点照明）
-    const hemiLight = new THREE.HemisphereLight(0xe8f9fd, 0x8d99ae, 1.45);
-    hemiLight.position.set(0, 35, 0);
+    // 夕暮れ〜トワイライトの東京都市ライティング ＋ ネオンリムライト
+    const hemiLight = new THREE.HemisphereLight(0x9ec5fe, 0x2b3648, 1.45);
+    hemiLight.position.set(0, 42, 0);
     scene.add(hemiLight);
 
-    const sunLight = new THREE.DirectionalLight(0xfff5d6, 2.65);
-    sunLight.position.set(16, 28, 18);
+    const sunLight = new THREE.DirectionalLight(0xffe5b4, 2.55);
+    sunLight.position.set(18, 30, 20);
     sunLight.castShadow = true;
     sunLight.shadow.mapSize.width = 2048;
     sunLight.shadow.mapSize.height = 2048;
     sunLight.shadow.camera.near = 1;
-    sunLight.shadow.camera.far = 75;
-    const d = 15;
+    sunLight.shadow.camera.far = 85;
+    const d = 18;
     sunLight.shadow.camera.left = -d;
     sunLight.shadow.camera.right = d;
     sunLight.shadow.camera.top = d;
@@ -424,16 +438,16 @@ async function initScene() {
     sunLight.shadow.bias = -0.0005;
     scene.add(sunLight);
 
-    // キャラクターの立体感を際立たせるシアン＆ゴールドのバックリムライト
-    const rimLightCyan = new THREE.DirectionalLight(0x00f2fe, 0.95);
-    rimLightCyan.position.set(-18, 12, -16);
+    // 都会のネオン反射を演出するシアン＆マゼンタピンクのバックリムライト
+    const rimLightCyan = new THREE.DirectionalLight(0x00f2fe, 1.05);
+    rimLightCyan.position.set(-20, 14, -18);
     scene.add(rimLightCyan);
 
-    const rimLightWarm = new THREE.DirectionalLight(0xffbe0b, 0.75);
-    rimLightWarm.position.set(18, 10, -14);
-    scene.add(rimLightWarm);
+    const rimLightNeon = new THREE.DirectionalLight(0xff2a85, 0.85);
+    rimLightNeon.position.set(20, 12, -16);
+    scene.add(rimLightNeon);
 
-    // Blender 5.2 Cycles コロシアム構築
+    // Blender 5.2 Cycles 東京・渋谷スクランブル交差点＆高層ビル街フィールド構築
     createDaylightAnimeColosseum();
 
     // プレイヤー＆CPU生成
@@ -446,18 +460,22 @@ async function initScene() {
     animate();
 }
 
+/**
+ * YouTube参考 (`https://youtu.be/uk404c43pRY` [Blender] 街をひと手間でそれっぽく作る)
+ * Blender 5.2 Cycles テクスチャ ＋ プロシージャル高層ビル群・ネオン看板・渋谷109風タワー・東京タワー・信号機・街灯
+ */
 function createDaylightAnimeColosseum() {
     const envGroup = new THREE.Group();
     const texLoader = new THREE.TextureLoader();
 
-    // 0. Blender 5.2 Cycles 360° パノラマ環境マップ＆スカイドーム読み込み
-    texLoader.load('./assets/renders/cycles_sky_env.png', skyTex => {
+    // 0. Blender 5.2 Cycles 360° 東京トワイライト＆摩天楼環境マップ読み込み
+    texLoader.load('./assets/renders/cycles_city_sky.png', skyTex => {
         skyTex.mapping = THREE.EquirectangularReflectionMapping;
         skyTex.colorSpace = THREE.SRGBColorSpace;
         cyclesEnvMap = skyTex;
         scene.environment = skyTex;
 
-        const skyDomeGeo = new THREE.SphereGeometry(185, 48, 32);
+        const skyDomeGeo = new THREE.SphereGeometry(220, 48, 32);
         const skyDomeMat = new THREE.MeshBasicMaterial({
             map: skyTex,
             side: THREE.BackSide,
@@ -468,153 +486,275 @@ function createDaylightAnimeColosseum() {
         envGroup.add(skyDome);
     });
 
-    // 1. Blender 5.2 Cycles レイトレーシング石畳＆古代ルーン刻印コロシアム床
+    // 1. 渋谷スクランブル交差点（5方向横断歩道＆濡れたアスファルト反射路面）
     const groundCanvas = document.createElement('canvas');
     groundCanvas.width = 512;
     groundCanvas.height = 512;
     const gctx = groundCanvas.getContext('2d');
-    const grad = gctx.createRadialGradient(256, 256, 20, 256, 256, 256);
-    grad.addColorStop(0, '#d2b47c');
-    grad.addColorStop(0.65, '#b8945a');
-    grad.addColorStop(1, '#7c623a');
-    gctx.fillStyle = grad;
+    gctx.fillStyle = '#1c222d';
     gctx.fillRect(0, 0, 512, 512);
+    gctx.fillStyle = '#e2e8f0';
+    for (let i = 0; i < 10; i++) {
+        gctx.fillRect(90 + i * 34, 60, 18, 80);
+        gctx.fillRect(90 + i * 34, 372, 18, 80);
+        gctx.fillRect(60, 90 + i * 34, 80, 18);
+        gctx.fillRect(372, 90 + i * 34, 80, 18);
+    }
     const fallbackGroundTex = new THREE.CanvasTexture(groundCanvas);
 
     const floorMat = new THREE.MeshStandardMaterial({
         map: fallbackGroundTex,
-        roughness: 0.48,
-        metalness: 0.18,
-        envMapIntensity: 1.25
+        roughness: 0.24, // 濡れたアスファルトの路面反射
+        metalness: 0.32,
+        envMapIntensity: 1.55
     });
 
-    // Blender 5.2 Cycles でレンダリングした高精細石畳＆発光ルーン床テクスチャを適用
-    texLoader.load('./assets/renders/cycles_arena_ground.png', cyclesGroundTex => {
+    // Blender 5.2 Cycles でレンダリングした渋谷スクランブル交差点アスファルトテクスチャを適用
+    texLoader.load('./assets/renders/cycles_city_ground.png', cyclesGroundTex => {
         cyclesGroundTex.colorSpace = THREE.SRGBColorSpace;
         cyclesGroundTex.anisotropy = 8;
         floorMat.map = cyclesGroundTex;
         floorMat.needsUpdate = true;
     });
 
-    const floorMesh = new THREE.Mesh(new THREE.CylinderGeometry(arenaRadius + 1.5, arenaRadius + 2.2, 1.4, 64), floorMat);
-    floorMesh.position.y = -0.7;
+    const floorMesh = new THREE.Mesh(new THREE.CylinderGeometry(arenaRadius + 2.5, arenaRadius + 3.0, 1.2, 64), floorMat);
+    floorMesh.position.y = -0.6;
     floorMesh.receiveShadow = true;
     envGroup.add(floorMesh);
 
-    // アリーナ中央の黄金ルーン魔法陣リング（Bloom対応）
-    const runeInnerRing = new THREE.Mesh(
-        new THREE.RingGeometry(3.55, 3.72, 64),
-        new THREE.MeshBasicMaterial({ color: 0x00f2fe, side: THREE.DoubleSide, transparent: true, opacity: 0.65 })
+    // 広域都市アスファルト基盤（遠景ビル街の地面）
+    const outerCityGround = new THREE.Mesh(
+        new THREE.PlaneGeometry(280, 280),
+        new THREE.MeshStandardMaterial({ color: 0x12161f, roughness: 0.35, metalness: 0.25 })
     );
-    runeInnerRing.rotation.x = -Math.PI / 2;
-    runeInnerRing.position.y = 0.02;
-    envGroup.add(runeInnerRing);
+    outerCityGround.rotation.x = -Math.PI / 2;
+    outerCityGround.position.y = -0.05;
+    outerCityGround.receiveShadow = true;
+    envGroup.add(outerCityGround);
 
-    // 外周の緑の芝生エッジ
-    const grassMat = createToonMaterial(0x588157, 0x000000, 0, 0.05, 0.8);
-    const grassRing = new THREE.Mesh(new THREE.RingGeometry(arenaRadius - 0.3, arenaRadius + 3.2, 64), grassMat);
-    grassRing.rotation.x = -Math.PI / 2;
-    grassRing.position.y = 0.01;
-    grassRing.receiveShadow = true;
-    envGroup.add(grassRing);
-
-    // 2. 光る黄金の境界リング ＋ 木の杭と横木のフェンス（画像1・2の柵を再現）
-    const glowRingMat = new THREE.MeshBasicMaterial({ color: 0xffe66d, side: THREE.DoubleSide, transparent: true, opacity: 0.85 });
-    const glowRing = new THREE.Mesh(new THREE.RingGeometry(arenaRadius - 0.14, arenaRadius + 0.10, 64), glowRingMat);
+    // スクランブル交差点バトルエリアのネオン境界リング
+    const glowRing = new THREE.Mesh(
+        new THREE.RingGeometry(arenaRadius - 0.14, arenaRadius + 0.12, 64),
+        new THREE.MeshBasicMaterial({ color: 0x00f2fe, side: THREE.DoubleSide, transparent: true, opacity: 0.85 })
+    );
     glowRing.rotation.x = -Math.PI / 2;
     glowRing.position.y = 0.03;
     envGroup.add(glowRing);
 
-    const woodMat = createToonMaterial(0x6f4e37, 0x000000, 0, 0.1, 0.72);
-    const postCount = 28;
-    for (let i = 0; i < postCount; i++) {
-        const ang = (i / postCount) * Math.PI * 2;
-        if (ang > Math.PI * 0.22 && ang < Math.PI * 0.78) continue;
+    // 外周の歩道縁石ブロック（Sidewalk Curb Ring）
+    const sidewalkMat = createToonMaterial(0x3a4354, 0x000000, 0, 0.15, 0.65);
+    const sidewalkRing = new THREE.Mesh(new THREE.RingGeometry(arenaRadius + 0.12, arenaRadius + 4.8, 64), sidewalkMat);
+    sidewalkRing.rotation.x = -Math.PI / 2;
+    sidewalkRing.position.y = 0.02;
+    sidewalkRing.receiveShadow = true;
+    envGroup.add(sidewalkRing);
 
-        const px = Math.cos(ang) * (arenaRadius + 0.3);
-        const pz = Math.sin(ang) * (arenaRadius + 0.3);
-        const post = createOutlinedPart(new THREE.BoxGeometry(0.24, 1.15, 0.24), woodMat, 0.02);
-        post.position.set(px, 0.55, pz);
-        post.rotation.y = -ang;
+    // 2. ビル窓発光テクスチャ（ひと手間でビル群をリアルにするプロシージャル窓グリッド）
+    function createBuildingWindowTexture(accentColorHex) {
+        const c = document.createElement('canvas');
+        c.width = 256;
+        c.height = 512;
+        const ctx = c.getContext('2d');
+        ctx.fillStyle = '#141a26';
+        ctx.fillRect(0, 0, 256, 512);
+
+        const cols = 8;
+        const rows = 20;
+        const padX = 6, padY = 5;
+        const w = (256 - padX * (cols + 1)) / cols;
+        const h = (512 - padY * (rows + 1)) / rows;
+
+        for (let r = 0; r < rows; r++) {
+            const floorLitChance = 0.25 + (Math.sin(r * 1.7) * 0.5 + 0.5) * 0.55;
+            for (let col = 0; col < cols; col++) {
+                const rand = Math.random();
+                if (rand < floorLitChance) {
+                    if (rand < 0.12) ctx.fillStyle = accentColorHex;
+                    else if (rand < 0.45) ctx.fillStyle = '#ffe8a3';
+                    else ctx.fillStyle = '#d8f3ff';
+                } else {
+                    ctx.fillStyle = '#1e2738';
+                }
+                ctx.fillRect(padX + col * (w + padX), padY + r * (h + padY), w, h);
+            }
+        }
+        const tex = new THREE.CanvasTexture(c);
+        tex.colorSpace = THREE.SRGBColorSpace;
+        return tex;
+    }
+
+    const winTexCyan = createBuildingWindowTexture('#00f2fe');
+    const winTexPink = createBuildingWindowTexture('#ff2a85');
+    const winTexGold = createBuildingWindowTexture('#ffdd59');
+
+    // 3. 正面奥の象徴的ランドマーク：「SHIBUYA 109」風シリンダータワー＆大型街頭ビジョン
+    const tower109Group = new THREE.Group();
+    tower109Group.position.set(0, 0, -21.5);
+
+    const podiumMat = new THREE.MeshStandardMaterial({ map: winTexPink, roughness: 0.35, metalness: 0.4 });
+    const podium = createOutlinedPart(new THREE.BoxGeometry(10.5, 16.0, 7.5), podiumMat, 0.012);
+    podium.position.set(0, 8.0, 1.2);
+    tower109Group.add(podium);
+
+    const cylMat = new THREE.MeshStandardMaterial({ color: 0xc8d6e5, roughness: 0.2, metalness: 0.75 });
+    const cylTower = createOutlinedPart(new THREE.CylinderGeometry(2.8, 2.8, 25.0, 24), cylMat, 0.012);
+    cylTower.position.set(0, 12.5, 4.2);
+    tower109Group.add(cylTower);
+
+    // 109風ネオンピンク＆シアンのクラウンリング
+    const crownRing1 = new THREE.Mesh(
+        new THREE.CylinderGeometry(2.9, 2.9, 1.4, 24),
+        new THREE.MeshBasicMaterial({ color: 0xff2a85 })
+    );
+    crownRing1.position.set(0, 21.5, 4.2);
+    tower109Group.add(crownRing1);
+
+    // 大型街頭LEDビジョン画面
+    const visionMat = new THREE.MeshBasicMaterial({ color: 0x00f2fe });
+    const visionScreen = new THREE.Mesh(new THREE.PlaneGeometry(6.8, 4.2), visionMat);
+    visionScreen.position.set(0, 10.5, 5.05);
+    tower109Group.add(visionScreen);
+
+    envGroup.add(tower109Group);
+
+    // 4. 周囲を取り囲む16棟の高層ビル群 ＋ 発光ネオン看板 ＋ 屋上赤色航空障害灯
+    const neonColors = [0xff2a85, 0x00f2fe, 0xffbe0b, 0x7bed9f, 0xa29bfe];
+    const buildingSpecs = [
+        [-15.5, -16.5, 6.2, 26.0, 6.2],
+        [-21.0, -8.5,  6.5, 31.0, 6.5],
+        [-21.5,  2.0,  6.0, 22.0, 6.0],
+        [-17.5,  11.5, 5.8, 19.0, 5.8],
+        [-10.5, -19.5, 5.5, 24.0, 5.5],
+        [ 10.5, -19.5, 5.8, 25.0, 5.8],
+        [ 16.5, -15.5, 6.5, 29.0, 6.5],
+        [ 21.5, -6.5,  6.2, 33.0, 6.2],
+        [ 21.0,  4.0,  5.8, 21.0, 5.8],
+        [ 16.5,  12.5, 6.0, 18.0, 6.0],
+        [-28.0, -22.0, 8.0, 42.0, 8.0],
+        [ 28.0, -24.0, 8.5, 45.0, 8.5],
+        [-12.0,  19.0, 6.5, 20.0, 6.5],
+        [ 12.0,  19.0, 6.5, 22.0, 6.5]
+    ];
+
+    const beaconMat = new THREE.MeshBasicMaterial({ color: 0xff3838 });
+    buildingSpecs.forEach(([bx, bz, bw, bh, bd], idx) => {
+        const wTex = idx % 3 === 0 ? winTexCyan : (idx % 3 === 1 ? winTexPink : winTexGold);
+        const bMat = new THREE.MeshStandardMaterial({
+            map: wTex,
+            roughness: 0.32,
+            metalness: 0.45,
+            emissive: new THREE.Color(0x1a2639),
+            emissiveIntensity: 0.35
+        });
+        const bldg = createOutlinedPart(new THREE.BoxGeometry(bw, bh, bd), bMat, 0.01);
+        bldg.position.set(bx, bh / 2, bz);
+        bldg.lookAt(0, bh / 2, 0);
+        envGroup.add(bldg);
+
+        // ビル側面の縦型ネオン看板（渋谷・新宿の繁華街らしさを演出）
+        const neonCol = neonColors[idx % neonColors.length];
+        const signMat = new THREE.MeshBasicMaterial({ color: neonCol });
+        const signMesh = new THREE.Mesh(new THREE.BoxGeometry(0.85, bh * 0.42, 0.25), signMat);
+        const toCenter = new THREE.Vector3(-bx, 0, -bz).normalize();
+        signMesh.position.set(
+            bx + toCenter.x * (bw * 0.52),
+            bh * 0.55,
+            bz + toCenter.z * (bd * 0.52)
+        );
+        signMesh.lookAt(0, bh * 0.55, 0);
+        envGroup.add(signMesh);
+
+        // 屋上の赤色航空障害灯（夜景・夕景のリアリティ向上）
+        const beacon = new THREE.Mesh(new THREE.SphereGeometry(0.24, 8, 8), beaconMat);
+        beacon.position.set(bx, bh + 0.35, bz);
+        envGroup.add(beacon);
+    });
+
+    // 5. 遠景ランドマーク：東京タワー風電波塔（左奥）
+    const towerGroup = new THREE.Group();
+    towerGroup.position.set(-22.0, 0, -34.0);
+    const redMat = new THREE.MeshBasicMaterial({ color: 0xff3838 });
+    const whiteMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+    for (let seg = 0; seg < 6; seg++) {
+        const rTop = 0.35 + (5 - seg) * 0.48;
+        const rBot = 0.35 + (6 - seg) * 0.48;
+        const segMesh = new THREE.Mesh(
+            new THREE.CylinderGeometry(rTop, rBot, 6.5, 8),
+            seg % 2 === 0 ? redMat : whiteMat
+        );
+        segMesh.position.y = seg * 6.5 + 3.25;
+        towerGroup.add(segMesh);
+    }
+    const spire = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.35, 8.0, 8), redMat);
+    spire.position.y = 43.0;
+    towerGroup.add(spire);
+    envGroup.add(towerGroup);
+
+    // 6. 街角の信号機・街灯・ガードレール・街路樹（ケヤキ並木）
+    const poleMat = createToonMaterial(0x4b5563, 0x000000, 0, 0.6, 0.35);
+    const railCount = 24;
+    for (let i = 0; i < railCount; i++) {
+        const ang = (i / railCount) * Math.PI * 2;
+        if (ang > Math.PI * 0.25 && ang < Math.PI * 0.75) continue;
+
+        const rx = Math.cos(ang) * (arenaRadius + 0.45);
+        const rz = Math.sin(ang) * (arenaRadius + 0.45);
+
+        // 都市型ガードレール支柱＆白銀ビーム
+        const post = createOutlinedPart(new THREE.CylinderGeometry(0.08, 0.08, 0.95, 8), poleMat, 0.015);
+        post.position.set(rx, 0.48, rz);
         envGroup.add(post);
 
-        const rail = createOutlinedPart(new THREE.BoxGeometry(0.12, 0.16, 2.4), woodMat, 0.015);
-        rail.position.set(px, 0.82, pz);
-        rail.rotation.y = -ang;
-        envGroup.add(rail);
+        const guardBeam = createOutlinedPart(new THREE.BoxGeometry(0.08, 0.22, 2.2), createToonMaterial(0xe2e8f0), 0.015);
+        guardBeam.position.set(rx, 0.72, rz);
+        guardBeam.rotation.y = -ang;
+        envGroup.add(guardBeam);
+
+        // 3本おきにモダンな街灯＆信号機を設置
+        if (i % 3 === 0) {
+            const lampX = Math.cos(ang) * (arenaRadius + 1.4);
+            const lampZ = Math.sin(ang) * (arenaRadius + 1.4);
+            const lampPole = new THREE.Mesh(new THREE.CylinderGeometry(0.10, 0.14, 5.2, 10), poleMat);
+            lampPole.position.set(lampX, 2.6, lampZ);
+            envGroup.add(lampPole);
+
+            const bulb = new THREE.Mesh(
+                new THREE.SphereGeometry(0.28, 12, 12),
+                new THREE.MeshBasicMaterial({ color: i % 6 === 0 ? 0x00f2fe : 0xffeaa7 })
+            );
+            bulb.position.set(lampX, 5.3, lampZ);
+            envGroup.add(bulb);
+        }
     }
 
-    // 3. 右奥の「巨大な大樹 (Ancient Great Tree)」(画像1・2右上の象徴的な大樹)
-    const treeGroup = new THREE.Group();
-    treeGroup.position.set(7.5, 0, -9.8);
-    const trunkMat = createToonMaterial(0x5c4033, 0x000000, 0, 0.08, 0.78);
-    const trunk = createOutlinedPart(new THREE.CylinderGeometry(1.4, 2.4, 11.0, 12), trunkMat, 0.015);
-    trunk.position.y = 5.0;
-    trunk.rotation.z = 0.08;
-    treeGroup.add(trunk);
+    // 街路樹（都会のケヤキ並木 6本）
+    const trunkMat = createToonMaterial(0x5c4033, 0x000000, 0, 0.1, 0.8);
+    const leafMat = createToonMaterial(0x2ecc71, 0x0b3b1e, 0.15, 0.05, 0.65);
+    const treeAngles = [-2.6, -2.1, -1.0, -0.5, 0.3, 2.8];
+    treeAngles.forEach(ang => {
+        const tx = Math.cos(ang) * (arenaRadius + 2.6);
+        const tz = Math.sin(ang) * (arenaRadius + 2.6);
+        const trunk = createOutlinedPart(new THREE.CylinderGeometry(0.22, 0.32, 2.8, 8), trunkMat, 0.015);
+        trunk.position.set(tx, 1.4, tz);
+        envGroup.add(trunk);
 
-    const leafMat1 = createToonMaterial(0x386641, 0x0b1f10, 0.12, 0.05, 0.65);
-    const leafMat2 = createToonMaterial(0x6a994e, 0x163012, 0.15, 0.05, 0.60);
-    const canopyPositions = [
-        [0, 10.5, 0, 4.8], [-3.2, 9.2, 1.2, 3.6], [3.0, 9.5, -1.0, 3.8], [0.8, 12.2, 1.0, 3.5]
-    ];
-    canopyPositions.forEach(([cx, cy, cz, cr], idx) => {
-        const canopy = createOutlinedPart(new THREE.DodecahedronGeometry(cr, 1), idx % 2 === 0 ? leafMat1 : leafMat2, 0.015);
-        canopy.position.set(cx, cy, cz);
-        treeGroup.add(canopy);
-    });
-    envGroup.add(treeGroup);
-
-    // 4. 古代ギリシャ風の折れた石柱 ＆ 黄金かがり火クリスタル ＆ 左奥の岩山クリフ
-    const pillarMat = createToonMaterial(0x95a5a6, 0x000000, 0, 0.22, 0.52);
-    const crystalBeaconMat = new THREE.MeshBasicMaterial({ color: 0x00f2fe });
-    const pillarCoords = [
-        [-4.5, -11.5, 6.5, 0.05],
-        [-8.8, -8.5, 4.2, -0.12],
-        [3.2, -12.2, 4.8, 0.04],
-        [10.8, -6.2, 7.2, -0.18]
-    ];
-    pillarCoords.forEach(([x, z, h, tilt]) => {
-        const p = createOutlinedPart(new THREE.CylinderGeometry(0.65, 0.72, h, 14), pillarMat, 0.018);
-        p.position.set(x, h / 2 - 0.2, z);
-        p.rotation.z = tilt;
-        envGroup.add(p);
-
-        const crystal = new THREE.Mesh(new THREE.OctahedronGeometry(0.32, 0), crystalBeaconMat);
-        crystal.position.set(x, h + 0.35, z);
-        envGroup.add(crystal);
+        const canopy = createOutlinedPart(new THREE.DodecahedronGeometry(1.45, 1), leafMat, 0.015);
+        canopy.position.set(tx, 3.3, tz);
+        envGroup.add(canopy);
     });
 
-    // 左奥の岩山
-    const cliffMat = createToonMaterial(0x576574, 0x000000, 0, 0.15, 0.68);
-    for (let i = 0; i < 6; i++) {
-        const rock = createOutlinedPart(new THREE.DodecahedronGeometry(3.2 + i * 0.6, 0), cliffMat, 0.012);
-        rock.position.set(-13.5 + i * 2.2, 2.2 + (i % 2) * 1.5, -11.0 - i * 1.2);
-        envGroup.add(rock);
-    }
-
-    // フィールド内の小石プロップ
-    for (let i = 0; i < 14; i++) {
-        const ang = Math.random() * Math.PI * 2;
-        const r = 6.2 + Math.random() * 3.2;
-        const pebble = createOutlinedPart(new THREE.DodecahedronGeometry(0.18 + Math.random() * 0.22, 0), cliffMat, 0.02);
-        pebble.position.set(Math.cos(ang) * r, 0.08, Math.sin(ang) * r);
-        pebble.scale.y = 0.55;
-        envGroup.add(pebble);
-    }
-
-    // 5. 空中を舞う黄金・蒼光の環境マナ粒子（32個）
-    const moteGeo = new THREE.OctahedronGeometry(0.055, 0);
-    for (let i = 0; i < 32; i++) {
+    // 7. 都会の空を舞うネオンホログラム粒子（36個）
+    const moteGeo = new THREE.OctahedronGeometry(0.06, 0);
+    for (let i = 0; i < 36; i++) {
         const mMat = new THREE.MeshBasicMaterial({
-            color: i % 2 === 0 ? 0xffe66d : 0x00f2fe,
+            color: i % 3 === 0 ? 0x00f2fe : (i % 3 === 1 ? 0xff2a85 : 0xffe66d),
             transparent: true,
-            opacity: 0.75
+            opacity: 0.8
         });
         const mote = new THREE.Mesh(moteGeo, mMat);
         const ang = Math.random() * Math.PI * 2;
-        const rad = 1.5 + Math.random() * (arenaRadius - 1.0);
-        const y = 0.4 + Math.random() * 3.6;
+        const rad = 1.5 + Math.random() * (arenaRadius - 0.8);
+        const y = 0.4 + Math.random() * 4.2;
         mote.position.set(Math.cos(ang) * rad, y, Math.sin(ang) * rad);
         envGroup.add(mote);
         ambientSparkles.push({
@@ -622,23 +762,10 @@ function createDaylightAnimeColosseum() {
             baseY: y,
             angle: ang,
             radius: rad,
-            speed: 0.18 + Math.random() * 0.35,
+            speed: 0.22 + Math.random() * 0.38,
             phase: Math.random() * Math.PI * 2
         });
     }
-
-    // 6. 遠景の青い大海原 (Cycles環境反射つきの水面)
-    const seaGeo = new THREE.PlaneGeometry(360, 360);
-    const seaMat = new THREE.MeshStandardMaterial({
-        color: 0x1e6bb8,
-        roughness: 0.16,
-        metalness: 0.65,
-        envMapIntensity: 1.6
-    });
-    const sea = new THREE.Mesh(seaGeo, seaMat);
-    sea.rotation.x = -Math.PI / 2;
-    sea.position.y = -2.2;
-    envGroup.add(sea);
 
     scene.add(envGroup);
 }
@@ -1269,11 +1396,11 @@ function createGuardShield(colorHex) {
 // ========================================================
 let studioSyncSlidersFn = null;
 
-function determinePlayerArchetype(ptAtk, ptRange, ptStun, ptAtkSpd, ptSpd, motionType) {
-    if (motionType === "speed_rush" || (ptAtkSpd + ptSpd >= 44)) {
+function determinePlayerArchetype(tAtk, tRange, tSpd, tStun, tAtkSpd, motionType) {
+    if (motionType === "speed_rush" || (tSpd + tAtkSpd >= 7)) {
         return "speed_assassin";
     }
-    if (motionType === "heavy_buster" || (ptAtk + ptRange >= 50)) {
+    if (motionType === "heavy_buster" || (tAtk + tRange >= 8)) {
         return "one_shot_buster";
     }
     return "iron_counter";
@@ -1311,6 +1438,8 @@ function buildChallengeUrl() {
         stun: player.stunPower,
         spd: player.speed,
         sliders: player.sliderPts,
+        combo: player.comboRoute,
+        ult: player.ultConfig,
         gambits: player.gambits
     };
     const encoded = btoa(encodeURIComponent(JSON.stringify(payload)));
@@ -1327,59 +1456,111 @@ function setupCreatorStudio() {
     const lockBtn = document.getElementById('btn-lock-register');
 
     const sliders = {
-        atk: document.getElementById('sl-atk'),
-        range: document.getElementById('sl-range'),
-        stun: document.getElementById('sl-stun'),
-        atkspd: document.getElementById('sl-atkspd'),
-        spd: document.getElementById('sl-spd')
+        atk: document.getElementById('sl-atk'),       // 🔴 剛撃トークン (Crimson Offense)
+        range: document.getElementById('sl-range'),   // 🟡 覇道トークン (Golden Impact)
+        spd: document.getElementById('sl-spd'),       // 🔵 蒼迅トークン (Azure Velocity)
+        stun: document.getElementById('sl-stun'),     // 🟢 堅守トークン (Emerald Aegis)
+        atkspd: document.getElementById('sl-atkspd')  // 🟣 魔導トークン (Astral Mind)
     };
 
-    const MAX_TOTAL_PT = 100;
+    const MAX_TOTAL_TOKENS = 15;
+    const MAX_PER_TOKEN = 6;
+
+    function renderTokenPips(containerId, count) {
+        const el = document.getElementById(containerId);
+        if (!el) return;
+        let html = '';
+        for (let i = 0; i < MAX_PER_TOKEN; i++) {
+            html += `<span class="token-pip ${i < count ? 'filled' : ''}"></span>`;
+        }
+        el.innerHTML = html;
+    }
 
     function syncSlidersAndCalculateStats(changedKey) {
+        // 0〜6の範囲にクランプ（レガシーな大きい値が入っていた場合も自動変換）
+        Object.keys(sliders).forEach(k => {
+            let v = Number(sliders[k].value);
+            if (v > MAX_PER_TOKEN) v = Math.min(MAX_PER_TOKEN, Math.round(v / 6));
+            if (v < 0) v = 0;
+            sliders[k].value = v;
+        });
+
         let total = Object.values(sliders).reduce((acc, el) => acc + Number(el.value), 0);
-        if (total > MAX_TOTAL_PT && changedKey) {
-            const overflow = total - MAX_TOTAL_PT;
+        if (total > MAX_TOTAL_TOKENS && changedKey) {
+            const overflow = total - MAX_TOTAL_TOKENS;
             sliders[changedKey].value = Math.max(0, Number(sliders[changedKey].value) - overflow);
-            total = MAX_TOTAL_PT;
+            total = Object.values(sliders).reduce((acc, el) => acc + Number(el.value), 0);
         }
 
-        const ptAtk = Number(sliders.atk.value);
-        const ptRange = Number(sliders.range.value);
-        const ptStun = Number(sliders.stun.value);
-        const ptAtkSpd = Number(sliders.atkspd.value);
-        const ptSpd = Number(sliders.spd.value);
+        const tAtk = Number(sliders.atk.value);       // 🔴 剛撃トークン
+        const tRange = Number(sliders.range.value);   // 🟡 覇道トークン
+        const tSpd = Number(sliders.spd.value);       // 🔵 蒼迅トークン
+        const tStun = Number(sliders.stun.value);     // 🟢 堅守トークン
+        const tAtkSpd = Number(sliders.atkspd.value); // 🟣 魔導トークン
 
-        const calcAtk = Number((0.85 + (ptAtk / 40) * 0.55).toFixed(2));       // 0.85x 〜 1.40x
-        const calcRange = Number((2.4 + (ptRange / 40) * 2.1).toFixed(1));     // 2.4m 〜 4.5m
-        const calcStun = Number((0.80 + (ptStun / 40) * 0.70).toFixed(2));     // 0.80x 〜 1.50x
-        const calcAtkSpd = Number((0.85 + (ptAtkSpd / 40) * 0.50).toFixed(2)); // 0.85x 〜 1.35x
-        const calcSpd = Number((5.2 + (ptSpd / 40) * 2.8).toFixed(1));         // 5.2 〜 8.0
+        // 5種トークンから全パラメータを算出
+        const calcAtk = Number((0.85 + tAtk * 0.11).toFixed(2));           // 0.85x 〜 1.51x
+        const calcRange = Number((2.4 + tRange * 0.40).toFixed(1));        // 2.4m 〜 4.8m
+        const calcStun = Number((0.85 + tRange * 0.12).toFixed(2));        // 0.85x 〜 1.57x
+        const calcSpd = Number((5.0 + tSpd * 0.55).toFixed(2));            // 5.0 〜 8.3
+        const calcAtkSpd = Number((0.85 + tSpd * 0.09).toFixed(2));        // 0.85x 〜 1.39x
+        const calcMaxHp = 1000 + tStun * 120;                              // 1000 〜 1720
+        const calcHpRegen = tStun * 4;                                     // +0 〜 +24 HP/秒
+        const calcSpRegenMult = Number((1.0 + tAtkSpd * 0.18).toFixed(2)); // 1.0x 〜 2.08x
+        const calcComboBonus = Number((0.02 + tAtkSpd * 0.01).toFixed(3)); // +2% 〜 +8%/HIT
 
-        document.getElementById('val-atk').innerText = `${calcAtk.toFixed(2)}x (${ptAtk}pt)`;
-        document.getElementById('val-range').innerText = `${calcRange.toFixed(1)}m (${ptRange}pt)`;
-        document.getElementById('val-stun').innerText = `${calcStun.toFixed(2)}x (${ptStun}pt)`;
-        document.getElementById('val-atkspd').innerText = `${calcAtkSpd.toFixed(2)}x (${ptAtkSpd}pt)`;
-        document.getElementById('val-spd').innerText = `${calcSpd.toFixed(1)} (${ptSpd}pt)`;
+        // ビジュアルトークンピップ更新
+        renderTokenPips('pips-atk', tAtk);
+        renderTokenPips('pips-range', tRange);
+        renderTokenPips('pips-spd', tSpd);
+        renderTokenPips('pips-stun', tStun);
+        renderTokenPips('pips-atkspd', tAtkSpd);
 
-        const rem = MAX_TOTAL_PT - total;
+        // ラベル表示更新
+        document.getElementById('val-atk').innerText = `${calcAtk.toFixed(2)}x (${tAtk}個)`;
+        document.getElementById('val-range').innerText = `${calcRange.toFixed(1)}m / 崩し${calcStun.toFixed(2)}x (${tRange}個)`;
+        document.getElementById('val-spd').innerText = `移動${calcSpd.toFixed(1)} / 攻速${calcAtkSpd.toFixed(2)}x (${tSpd}個)`;
+        document.getElementById('val-stun').innerText = `HP ${calcMaxHp} / 回復+${calcHpRegen} (${tStun}個)`;
+        document.getElementById('val-atkspd').innerText = `SP+${Math.round((calcSpRegenMult - 1) * 100)}% (${tAtkSpd}個)`;
+
+        const rem = MAX_TOTAL_TOKENS - total;
         const badge = document.getElementById('cr-pt-badge');
-        badge.innerText = `残り: ${rem} / ${MAX_TOTAL_PT} PT`;
-        badge.style.background = rem === 0 ? '#10b981' : '#0284c7';
+        if (badge) {
+            badge.innerText = `残り: ${rem} / ${MAX_TOTAL_TOKENS} トークン`;
+            badge.style.background = rem === 0 ? '#10b981' : '#0284c7';
+        }
 
         return {
-            ptAtk, ptRange, ptStun, ptAtkSpd, ptSpd,
-            calcAtk, calcRange, calcStun, calcAtkSpd, calcSpd
+            ptAtk: tAtk, ptRange: tRange, ptSpd: tSpd, ptStun: tStun, ptAtkSpd: tAtkSpd,
+            calcAtk, calcRange, calcStun, calcAtkSpd, calcSpd,
+            calcMaxHp, calcHpRegen, calcSpRegenMult, calcComboBonus
         };
     }
 
     studioSyncSlidersFn = syncSlidersAndCalculateStats;
 
     Object.entries(sliders).forEach(([key, el]) => {
-        el.addEventListener('input', () => syncSlidersAndCalculateStats(key));
+        if (el) el.addEventListener('input', () => syncSlidersAndCalculateStats(key));
     });
 
-    // ワンクリック配分プリセット（3すくみ対応）
+    // トークン [+] / [-] ボタンのクリックハンドラ
+    document.querySelectorAll('.tok-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            if (player.is_active || player.isCustomCharLocked) {
+                showAnnouncement('🔒 出撃ロック中！敗北（引退）するまでトークン再配分はできません！', '#ff4757');
+                return;
+            }
+            const key = btn.getAttribute('data-tok');
+            const delta = Number(btn.getAttribute('data-delta') || 0);
+            const sl = sliders[key];
+            if (!sl) return;
+            const nextVal = Math.max(0, Math.min(MAX_PER_TOKEN, Number(sl.value) + delta));
+            sl.value = nextVal;
+            syncSlidersAndCalculateStats(key);
+        });
+    });
+
+    // ワンクリック5種トークン配分プリセット（3すくみ＆コンボ・必殺技連動）
     document.querySelectorAll('.alloc-btn').forEach(btn => {
         btn.addEventListener('click', () => {
             if (player.is_active || player.isCustomCharLocked) {
@@ -1388,20 +1569,38 @@ function setupCreatorStudio() {
             }
             const preset = btn.getAttribute('data-preset');
             if (preset === 'balance') {
-                sliders.atk.value = 14; sliders.range.value = 14; sliders.stun.value = 18; sliders.atkspd.value = 28; sliders.spd.value = 26;
+                // ⚡ 蒼迅スピード連撃型 (計15トークン)
+                sliders.atk.value = 3; sliders.range.value = 2; sliders.spd.value = 5; sliders.stun.value = 2; sliders.atkspd.value = 3;
                 document.getElementById('cr-motion').value = 'speed_rush';
+                if (document.getElementById('cmb-starter')) document.getElementById('cmb-starter').value = 'flash_step';
+                if (document.getElementById('cmb-linker')) document.getElementById('cmb-linker').value = 'multi_flurry';
+                if (document.getElementById('cmb-finisher')) document.getElementById('cmb-finisher').value = 'sky_upper';
+                if (document.getElementById('ult-form')) document.getElementById('ult-form').value = 'omniscience_rush';
+                if (document.getElementById('ult-trait')) document.getElementById('ult-trait').value = 'overdrive_buff';
                 document.getElementById('ai-cond-1').value = 'sp_50'; document.getElementById('ai-act-1').value = 'ult_ex';
                 document.getElementById('ai-cond-2').value = 'enemy_stun'; document.getElementById('ai-act-2').value = 'skill_arts';
                 document.getElementById('ai-cond-3').value = 'always'; document.getElementById('ai-act-3').value = 'atk_rush';
             } else if (preset === 'power_range') {
-                sliders.atk.value = 36; sliders.range.value = 36; sliders.stun.value = 16; sliders.atkspd.value = 6; sliders.spd.value = 6;
+                // 💥 剛撃・覇道一撃必殺型 (計15トークン)
+                sliders.atk.value = 6; sliders.range.value = 5; sliders.spd.value = 1; sliders.stun.value = 2; sliders.atkspd.value = 1;
                 document.getElementById('cr-motion').value = 'heavy_buster';
+                if (document.getElementById('cmb-starter')) document.getElementById('cmb-starter').value = 'armor_impact';
+                if (document.getElementById('cmb-linker')) document.getElementById('cmb-linker').value = 'guard_crush';
+                if (document.getElementById('cmb-finisher')) document.getElementById('cmb-finisher').value = 'meteor_smash';
+                if (document.getElementById('ult-form')) document.getElementById('ult-form').value = 'meteor_drop';
+                if (document.getElementById('ult-trait')) document.getElementById('ult-trait').value = 'execute_bonus';
                 document.getElementById('ai-cond-1').value = 'sp_50'; document.getElementById('ai-act-1').value = 'ult_ex';
                 document.getElementById('ai-cond-2').value = 'enemy_guard'; document.getElementById('ai-act-2').value = 'atk_launch';
                 document.getElementById('ai-cond-3').value = 'always'; document.getElementById('ai-act-3').value = 'atk_wide';
             } else if (preset === 'combo_stun') {
-                sliders.atk.value = 18; sliders.range.value = 18; sliders.stun.value = 34; sliders.atkspd.value = 16; sliders.spd.value = 14;
+                // 🛡️ 堅守・魔導カウンター要塞型 (計15トークン)
+                sliders.atk.value = 2; sliders.range.value = 2; sliders.spd.value = 2; sliders.stun.value = 5; sliders.atkspd.value = 4;
                 document.getElementById('cr-motion').value = 'acrobat_martial';
+                if (document.getElementById('cmb-starter')) document.getElementById('cmb-starter').value = 'mirage_kick';
+                if (document.getElementById('cmb-linker')) document.getElementById('cmb-linker').value = 'spiral_slash';
+                if (document.getElementById('cmb-finisher')) document.getElementById('cmb-finisher').value = 'cyclone_burst';
+                if (document.getElementById('ult-form')) document.getElementById('ult-form').value = 'orbital_laser';
+                if (document.getElementById('ult-trait')) document.getElementById('ult-trait').value = 'vampire_heal';
                 document.getElementById('ai-cond-1').value = 'enemy_attack'; document.getElementById('ai-act-1').value = 'guard_counter';
                 document.getElementById('ai-cond-2').value = 'enemy_stun'; document.getElementById('ai-act-2').value = 'skill_arts';
                 document.getElementById('ai-cond-3').value = 'always'; document.getElementById('ai-act-3').value = 'atk_launch';
@@ -1437,9 +1636,9 @@ function setupCreatorStudio() {
         player.sliderPts = {
             atk: stats.ptAtk,
             range: stats.ptRange,
+            spd: stats.ptSpd,
             stun: stats.ptStun,
-            atkspd: stats.ptAtkSpd,
-            spd: stats.ptSpd
+            atkspd: stats.ptAtkSpd
         };
 
         player.design.name = document.getElementById('cr-name').value.trim() || "PLAYER (自作)";
@@ -1453,16 +1652,33 @@ function setupCreatorStudio() {
         player.vfxElement = document.getElementById('cr-vfx').value;
         player.skillName = document.getElementById('cr-skill-name').value.trim() || "⚡ 蒼雷・神速烈空閃 ⚡";
 
+        // コンボ攻撃3段ルート ＆ 必殺技フレームワーク設定を反映
+        player.comboRoute = {
+            starter: document.getElementById('cmb-starter')?.value || 'flash_step',
+            linker: document.getElementById('cmb-linker')?.value || 'spiral_slash',
+            finisher: document.getElementById('cmb-finisher')?.value || 'sky_upper'
+        };
+        player.ultConfig = {
+            form: document.getElementById('ult-form')?.value || 'meteor_drop',
+            trait: document.getElementById('ult-trait')?.value || 'vampire_heal'
+        };
+
+        // 5種トークンによる全パラメータ反映
         player.atkScale = stats.calcAtk;
         player.attackRange = stats.calcRange;
         player.stunPower = stats.calcStun;
         player.atkSpeed = stats.calcAtkSpd;
         player.speed = stats.calcSpd;
+        player.maxHp = stats.calcMaxHp;
+        player.hp = player.maxHp;
+        player.hpRegen = stats.calcHpRegen;
+        player.spRegenMult = stats.calcSpRegenMult;
+        player.comboBonus = stats.calcComboBonus;
         player.specialRange = Number((player.attackRange * 3.1).toFixed(1));
         player.gambits = readGambitsFromUI();
 
         player.archetype = determinePlayerArchetype(
-            stats.ptAtk, stats.ptRange, stats.ptStun, stats.ptAtkSpd, stats.ptSpd, player.motionType
+            stats.ptAtk, stats.ptRange, stats.ptSpd, stats.ptStun, stats.ptAtkSpd, player.motionType
         );
 
         // 外部VRMから自作デザインへ戻す場合はクリーンアップ
@@ -1480,6 +1696,7 @@ function setupCreatorStudio() {
 
         rebuildPlayerModelFromDesign();
         updatePlayerSpecHud();
+        updateGauges();
 
         document.getElementById('player-name').innerText = player.design.name;
         spawnGroundSlamVFX(player.position, player.themeColor, 1.1);
@@ -1487,10 +1704,10 @@ function setupCreatorStudio() {
         if (lockRegistration) {
             lockCustomCharacterSlot(player.design.name);
             modal.style.display = 'none';
-            showAnnouncement(`🚀 ${player.design.name} 出撃ロック完了！(敗北するまで変更不可)`, "#00f2fe");
+            showAnnouncement(`🚀 ${player.design.name} 渋谷ストリートへ出撃ロック完了！`, "#00f2fe");
         } else {
             modal.style.display = 'none';
-            showAnnouncement(`✨ プレビュー反映完了！`, "#ffd32a");
+            showAnnouncement(`✨ トークン配分＆コンボ・必殺技構成を反映しました！`, "#ffd32a");
         }
     }
 
@@ -1582,12 +1799,12 @@ function unlockCharacterOnDefeat() {
 }
 
 /**
- * 自分を倒した敵（CPU/ゴースト）のAIガンビット＆ステータス配分を1タップでコピーしてスタジオを開く
+ * 自分を倒した敵（CPU/ゴースト）のAIガンビット＆トークン配分を1タップでコピーしてスタジオを開く
  */
 function copyEnemyBuildAndOpenStudio() {
     unlockCharacterOnDefeat();
     const boss = cpu.bossInfo || CPU_BOSS_TYPES[0];
-    const presetSliders = boss.presetSliders || { atk: 24, range: 24, stun: 24, atkspd: 14, spd: 14 };
+    const presetSliders = boss.presetSliders || { atk: 4, range: 4, spd: 2, stun: 3, atkspd: 2 };
     const presetGambits = boss.presetGambits || [
         { cond: "sp_50", act: "ult_ex" },
         { cond: "enemy_stun", act: "skill_arts" },
@@ -1619,13 +1836,14 @@ function copyEnemyBuildAndOpenStudio() {
     document.getElementById('result-modal').style.display = 'none';
     resetGame();
     document.getElementById('creator-modal').style.display = 'flex';
-    showAnnouncement(`⚡ 強敵「${boss.name}」のAI＆ステ構成をコピーしました！`, "#00f2fe");
+    showAnnouncement(`⚡ 強敵「${boss.name}」のAI＆トークン構成をコピーしました！`, "#00f2fe");
 }
 
 function updatePlayerSpecHud() {
     const specEl = document.getElementById('player-spec-tag');
     if (specEl) {
-        specEl.innerText = `⚔️ATK:${player.atkScale.toFixed(2)}x | 📏範囲:${player.attackRange.toFixed(1)}m | 💫崩し:${player.stunPower.toFixed(2)}x | ⚡攻速:${player.atkSpeed.toFixed(2)}x`;
+        const t = player.sliderPts || { atk: 3, range: 3, spd: 3, stun: 3, atkspd: 3 };
+        specEl.innerText = `🔴剛${t.atk} 🟡覇${t.range} 🔵迅${t.spd} 🟢堅${t.stun} 🟣魔${t.atkspd} | ATK:${player.atkScale.toFixed(2)}x 範囲:${player.attackRange.toFixed(1)}m`;
     }
     const archEl = document.getElementById('player-archetype-badge');
     if (archEl) {
@@ -1936,70 +2154,101 @@ function addCombo(hits, damage) {
     }, 2400);
 }
 
+const COMBO_MOVE_EFFECTS = {
+    // 1段目 Starter
+    flash_step:       { label: "⚡閃光ステップ", lunge: 8.8, dmgMult: 1.0, rangeMult: 1.15, poiseMult: 1.0, launchY: 0 },
+    armor_impact:     { label: "🛡️重装インパクト", lunge: 5.5, dmgMult: 1.22, rangeMult: 1.05, poiseMult: 1.35, launchY: 0 },
+    sonic_jab:        { label: "👊音速ジャブ", lunge: 6.2, dmgMult: 0.95, rangeMult: 1.0, poiseMult: 1.15, launchY: 0 },
+    mirage_kick:      { label: "👟幻影ローキック", lunge: 7.4, dmgMult: 1.05, rangeMult: 1.10, poiseMult: 1.25, launchY: 0 },
+    // 2段目 Linker
+    spiral_slash:     { label: "🌪️旋風連斬", lunge: 6.5, dmgMult: 1.15, rangeMult: 1.28, poiseMult: 1.15, launchY: 0 },
+    multi_flurry:     { label: "⚡百裂ラッシュ", lunge: 6.0, dmgMult: 1.25, rangeMult: 1.05, poiseMult: 1.20, launchY: 0 },
+    guard_crush:      { label: "🔨ガードクラッシュ", lunge: 5.8, dmgMult: 1.18, rangeMult: 1.10, poiseMult: 1.85, launchY: 0 },
+    plasma_wave:      { label: "🌊衝撃波ウェイブ", lunge: 5.0, dmgMult: 1.12, rangeMult: 1.40, poiseMult: 1.10, launchY: 0 },
+    // 3段目 Finisher
+    sky_upper:        { label: "🚀昇龍アッパー", lunge: 8.0, dmgMult: 1.35, rangeMult: 1.12, poiseMult: 1.45, launchY: 8.4 },
+    meteor_smash:     { label: "☄️メテオスマッシュ", lunge: 7.5, dmgMult: 1.55, rangeMult: 1.25, poiseMult: 1.60, launchY: 5.2 },
+    dimension_thrust: { label: "🗡️次元貫通突き", lunge: 10.5, dmgMult: 1.42, rangeMult: 1.35, poiseMult: 1.40, launchY: 4.5 },
+    cyclone_burst:    { label: "🌀暴風ハリケーン", lunge: 6.8, dmgMult: 1.38, rangeMult: 1.45, poiseMult: 1.50, launchY: 7.2 }
+};
+
 /**
- * プレイヤーの通常攻撃 3系統（⚡連撃 rush / ⚔️広範囲斬撃 wide / 🗡️打ち上げ強攻撃 launch）
+ * プレイヤーの通常攻撃 ＆ カスタム3段コンボルート（Starter ➔ Linker ➔ Finisher）
  */
 function performPlayerAttack(subType = "rush") {
     if (!isGameActive) return;
     if (player.state === "special" || player.state === "down") return;
 
-    const cancelWindow = 0.16 / player.atkSpeed;
+    const overdriveMult = player.overdriveTimer > 0 ? 1.28 : 1.0;
+    const cancelWindow = 0.16 / (player.atkSpeed * overdriveMult);
     if ((player.state === "attack" || player.state === "skill") && player.stateTimer > cancelWindow) return;
 
     player.attackSubType = subType;
-    player.comboStep = (player.comboStep % 4) + 1;
+    player.comboStep = (player.comboStep % 3) + 1;
     player.state = "attack";
 
-    const baseDur = subType === "launch" ? 0.46 : (subType === "wide" ? 0.38 : 0.28);
-    player.stateDuration = baseDur / player.atkSpeed;
+    // コンボ段数に応じたユーザー選択技を取得
+    const route = player.comboRoute || { starter: 'flash_step', linker: 'spiral_slash', finisher: 'sky_upper' };
+    const moveKey = player.comboStep === 1 ? route.starter : (player.comboStep === 2 ? route.linker : route.finisher);
+    const moveSpec = COMBO_MOVE_EFFECTS[moveKey] || COMBO_MOVE_EFFECTS.flash_step;
+
+    const baseDur = (player.comboStep === 3 || subType === "launch") ? 0.44 : (subType === "wide" ? 0.36 : 0.27);
+    player.stateDuration = baseDur / (player.atkSpeed * overdriveMult);
     player.stateTimer = player.stateDuration;
+
+    // 1段目が armor_impact の場合は攻撃中スーパーアーマー（無敵）付与
+    if (player.comboStep === 1 && moveKey === "armor_impact") {
+        player.isInvincible = true;
+        setTimeout(() => { if (player.state !== "special") player.isInvincible = false; }, 260);
+    }
 
     const toCpu = new THREE.Vector3().subVectors(cpu.position, player.position);
     const dist = toCpu.length();
     player.rotationY = Math.atan2(toCpu.x, toCpu.z);
 
-    const lunge = subType === "launch" ? 7.5 : (subType === "wide" ? 6.0 : 5.0);
+    const lunge = moveSpec.lunge * (subType === "launch" ? 1.1 : 1.0);
     player.velocity.copy(toCpu.clone().normalize().multiplyScalar(lunge));
     spawnFootstepDust(player.position, 1.5);
 
     const pal = getVfxPalette();
-    const rangeRatio = player.attackRange / 3.1;
+    const rangeRatio = (player.attackRange / 3.1) * moveSpec.rangeMult;
 
-    if (player.motionType === "magic_shooter") {
+    if (player.motionType === "magic_shooter" || moveKey === "plasma_wave") {
         spawnMagicProjectile(player.position, toCpu.clone().normalize(), pal.main, subType);
     }
 
-    spawnCrescentSlash(player.position, cpu.position, subType === "launch" ? pal.sub : pal.main, player.comboStep, rangeRatio);
+    spawnCrescentSlash(player.position, cpu.position, player.comboStep === 3 ? pal.sub : pal.main, player.comboStep, rangeRatio);
 
-    const effectiveRange = player.attackRange * (subType === "wide" ? 1.15 : (subType === "launch" ? 1.05 : 1.0));
+    const effectiveRange = player.attackRange * moveSpec.rangeMult * (subType === "wide" ? 1.12 : 1.0);
     if (dist <= effectiveRange) {
-        const rawDmg = subType === "launch" ? 95 : (subType === "wide" ? 68 : 46);
-        const isFinisher = player.comboStep === 4 || subType === "launch";
+        const rawDmg = (subType === "launch" ? 86 : (subType === "wide" ? 66 : 50)) * moveSpec.dmgMult;
+        const isFinisher = player.comboStep === 3 || subType === "launch";
         const archMult = getArchetypeMultiplier(player.archetype, cpu.archetype);
-        let finalDmg = Math.round(rawDmg * player.atkScale * archMult * (1 + comboHits * 0.03));
+        const comboScale = 1 + comboHits * (player.comboBonus || 0.04);
+        let finalDmg = Math.round(rawDmg * player.atkScale * overdriveMult * archMult * comboScale);
 
-        const poiseDamage = (subType === "launch" ? 48 : (subType === "wide" ? 30 : 22)) * player.stunPower * archMult;
+        const poiseDamage = (subType === "launch" ? 45 : 26) * moveSpec.poiseMult * player.stunPower * archMult;
         cpu.poise = Math.max(0, cpu.poise - poiseDamage);
 
-        if (cpu.isGuarding && subType !== "launch" && cpu.poise > 0) {
+        if (cpu.isGuarding && subType !== "launch" && moveKey !== "guard_crush" && cpu.poise > 0) {
             finalDmg = Math.floor(finalDmg * 0.2);
             spawnHitSparks(cpu.position, 0x70a1ff, 18);
             spawnDamageNumber(cpu.position.x, cpu.position.y + cpu.airY, cpu.position.z, finalDmg, "guard", "GUARD");
         } else {
             cpu.isGuarding = false;
-            const stunDuration = (subType === "launch" ? 0.85 : 0.52) * player.stunPower;
+            const stunDuration = (isFinisher ? 0.85 : 0.52) * player.stunPower;
             cpu.stunTimer = stunDuration;
             cpu.aiTimer = Math.max(cpu.aiTimer, stunDuration + 0.15);
             battleStats.stunsInflicted++;
 
-            if (subType === "launch" || (player.comboStep === 4 && player.airY <= 0.1)) {
+            if (isFinisher || moveSpec.launchY > 0) {
                 cpu.state = "launched";
                 cpu.stateDuration = stunDuration;
                 cpu.stateTimer = stunDuration;
-                cpu.airVelY = 7.8;
-                cpu.velocity.add(toCpu.clone().normalize().multiplyScalar(3.5));
-                spawnGroundSlamVFX(cpu.position, pal.sub, 1.1);
-                spawnDamageNumber(cpu.position.x, cpu.position.y + cpu.airY, cpu.position.z, finalDmg, "crit", archMult > 1 ? "WEAK! LAUNCH!" : "LAUNCH!");
+                cpu.airVelY = moveSpec.launchY || 7.6;
+                cpu.velocity.add(toCpu.clone().normalize().multiplyScalar(3.6));
+                spawnGroundSlamVFX(cpu.position, pal.sub, 1.15);
+                spawnDamageNumber(cpu.position.x, cpu.position.y + cpu.airY, cpu.position.z, finalDmg, "crit", `${moveSpec.label}!`);
             } else {
                 cpu.state = "stunned";
                 cpu.stateDuration = stunDuration;
@@ -2008,7 +2257,7 @@ function performPlayerAttack(subType = "rush") {
                     cpu.airVelY = Math.max(cpu.airVelY, 2.8);
                 }
                 cpu.velocity.add(toCpu.clone().normalize().multiplyScalar(2.4));
-                spawnDamageNumber(cpu.position.x, cpu.position.y + cpu.airY, cpu.position.z, finalDmg, isFinisher ? "crit" : "stun", archMult > 1 ? "相性有利!" : (comboHits >= 2 ? "STUN!" : ""));
+                spawnDamageNumber(cpu.position.x, cpu.position.y + cpu.airY, cpu.position.z, finalDmg, "stun", moveSpec.label);
             }
 
             cameraShakeIntensity = isFinisher ? 0.38 : 0.16;
@@ -2018,7 +2267,7 @@ function performPlayerAttack(subType = "rush") {
 
         applyDamage('cpu', finalDmg);
         addCombo(1, finalDmg);
-        player.sp = Math.min(player.maxSp, player.sp + 10);
+        player.sp = Math.min(player.maxSp, player.sp + Math.round(10 * (player.spRegenMult || 1.0)));
         updateGauges();
     }
 }
@@ -2035,8 +2284,8 @@ function spawnMagicProjectile(startPos, dir, colorHex, subType) {
 
     projectilesList.push({
         mesh,
-        vel: dir.clone().multiplyScalar(18.0),
-        life: 0.75,
+        vel: dir.clone().multiplyScalar(18.5),
+        life: 0.78,
         colorHex,
         subType
     });
@@ -2069,11 +2318,12 @@ function performSkillArts() {
     spawnCrescentSlash(player.position, cpu.position, pal.main, 2, (player.attackRange / 3.1) * 1.35);
 
     const archMult = getArchetypeMultiplier(player.archetype, cpu.archetype);
+    const overdriveMult = player.overdriveTimer > 0 ? 1.28 : 1.0;
     if (dist <= player.attackRange * 1.45) {
         for (let i = 0; i < 3; i++) {
             setTimeout(() => {
                 if (!isGameActive) return;
-                const hitDmg = Math.round(52 * player.atkScale * archMult);
+                const hitDmg = Math.round(54 * player.atkScale * overdriveMult * archMult);
                 cpu.state = "stunned";
                 cpu.stunTimer = 0.65 * player.stunPower;
                 cpu.stateTimer = cpu.stunTimer;
@@ -2091,7 +2341,7 @@ function performSkillArts() {
 }
 
 /**
- * 🌟 必殺奥義 EX (SP 50消費)
+ * 🌟 必殺奥義 EX (SP 50消費 — 奥義の型 Form × 固有特殊能力 Trait 対応)
  */
 function performPlayerSpecial() {
     if (!isGameActive) return;
@@ -2118,43 +2368,75 @@ function performPlayerSpecial() {
     spawnGroundSlamVFX(player.position, pal.main, 1.4);
     cinematicCameraMode = "zoom_player";
 
+    const ultForm = player.ultConfig?.form || "meteor_drop";
+    const ultTrait = player.ultConfig?.trait || "vampire_heal";
+
     const cutin = document.getElementById('special-cutin');
     document.getElementById('cutin-char').innerText = player.design.name;
     document.getElementById('cutin-skill').innerText = player.skillName;
     cutin.classList.add('active');
 
     const archMult = getArchetypeMultiplier(player.archetype, cpu.archetype);
+    const executeMult = (ultTrait === "execute_bonus" && cpu.hp <= cpu.maxHp * 0.5) ? 1.50 : 1.0;
+    const tokenUltBonus = 1.0 + ((player.sliderPts?.atk || 3) * 0.08);
+    const hitCount = ultForm === "omniscience_rush" ? 8 : (ultForm === "orbital_laser" ? 6 : 5);
+    const basePerHit = ultForm === "omniscience_rush" ? 52 : (ultForm === "orbital_laser" ? 68 : 80);
 
     setTimeout(() => {
         cutin.classList.remove('active');
         cinematicCameraMode = "action_wide";
 
-        spawnGroundSlamVFX(cpu.position, pal.main, 2.2);
-        spawnGroundSlamVFX(cpu.position, pal.sub, 1.6);
+        spawnGroundSlamVFX(cpu.position, pal.main, 2.3);
+        spawnGroundSlamVFX(cpu.position, pal.sub, 1.7);
 
-        for (let i = 0; i < 5; i++) {
-            setTimeout(() => {
-                if (!isGameActive) return;
-                const partDmg = Math.round(78 * player.atkScale * archMult);
-                spawnHitSparks(cpu.position, i % 2 === 0 ? pal.main : pal.sub, 45);
-                spawnDamageNumber(cpu.position.x, cpu.position.y + cpu.airY, cpu.position.z, partDmg, "crit", i === 4 ? "FINISH!!" : "EX!");
-                applyDamage('cpu', partDmg);
-                addCombo(1, partDmg);
-            }, i * 85);
+        // 固有特殊能力②: 完全装甲破壊 (敵ガード無効化＆体幹0＋2秒スタン)
+        if (ultTrait === "guard_shatter") {
+            cpu.isGuarding = false;
+            cpu.poise = 0;
+            cpu.stunTimer = 2.0;
+            spawnDamageNumber(cpu.position.x, cpu.position.y + 1.8, cpu.position.z, "BREAK!", "crit", "🔨装甲破壊");
         }
 
-        cameraShakeIntensity = 0.75;
+        // 固有特殊能力③: 10秒間 覚醒オーバークロック (攻撃・速度1.28倍)
+        if (ultTrait === "overdrive_buff") {
+            player.overdriveTimer = 10.0;
+            showAnnouncement("⚡ 10秒間 覚醒オーバークロック発動！(ATK・速度UP)", "#ffd32a");
+        }
+
+        let totalDealt = 0;
+        for (let i = 0; i < hitCount; i++) {
+            setTimeout(() => {
+                if (!isGameActive) return;
+                const partDmg = Math.round(basePerHit * player.atkScale * tokenUltBonus * archMult * executeMult);
+                totalDealt += partDmg;
+                spawnHitSparks(cpu.position, i % 2 === 0 ? pal.main : pal.sub, 45);
+                const prefix = executeMult > 1 ? "💀処刑1.5x!" : (i === hitCount - 1 ? "FINISH!!" : "EX!");
+                spawnDamageNumber(cpu.position.x, cpu.position.y + cpu.airY, cpu.position.z, partDmg, "crit", prefix);
+                applyDamage('cpu', partDmg);
+                addCombo(1, partDmg);
+
+                // 固有特殊能力①: 吸血ドレイン (最終段ヒット時に総ダメージの35%HP回復)
+                if (i === hitCount - 1 && ultTrait === "vampire_heal" && player.hp > 0) {
+                    const healAmt = Math.round(totalDealt * 0.35);
+                    player.hp = Math.min(player.maxHp, player.hp + healAmt);
+                    updateGauges();
+                    spawnDamageNumber(player.position.x, player.position.y + 1.5, player.position.z, `+${healAmt} HP`, "stun", "🩸吸収");
+                }
+            }, i * 75);
+        }
+
+        cameraShakeIntensity = 0.78;
         hitStopTimer = 0.10;
         cpu.velocity.add(toCpu.normalize().multiplyScalar(14.0));
-        cpu.airVelY = 6.5;
+        cpu.airVelY = 6.8;
         cpu.state = "down";
-        cpu.stateDuration = 1.2;
-        cpu.stateTimer = 1.2;
+        cpu.stateDuration = 1.3;
+        cpu.stateTimer = 1.3;
 
         setTimeout(() => {
             cinematicCameraMode = null;
             player.isInvincible = false;
-        }, 620);
+        }, 650);
     }, 480);
 }
 
@@ -2901,8 +3183,16 @@ function animate() {
             roundTimerAccum = 0;
             roundTimer = Math.max(0, roundTimer - 1);
             document.getElementById('round-timer-val').innerText = String(roundTimer).padStart(2, '0');
+            // 🟢 堅守トークンによる秒間HPリジェネ回復
+            if (player.hpRegen > 0 && player.hp > 0 && player.hp < player.maxHp) {
+                player.hp = Math.min(player.maxHp, player.hp + player.hpRegen);
+            }
         }
-        player.sp = Math.min(player.maxSp, player.sp + 4.8 * dt);
+        if (player.overdriveTimer > 0) {
+            player.overdriveTimer = Math.max(0, player.overdriveTimer - dt);
+        }
+        // 🟣 魔導トークンによるSP獲得速度倍率
+        player.sp = Math.min(player.maxSp, player.sp + 4.8 * (player.spRegenMult || 1.0) * dt);
         updateGauges();
     }
 
@@ -3100,17 +3390,34 @@ function onResize() {
 }
 
 // ========================================================
-// 14. 入力バインド（監督バー ＆ キーボード ＆ 左下ATTACK / 右下SKILL パッド）
+// 14. 入力バインド（監督バー ＆ グラフ/ループダッシュボード ＆ パッド）
 // ========================================================
+function openGraphLoopModal() {
+    const modal = document.getElementById('graph-loop-modal');
+    const body = document.getElementById('graph-loop-telemetry-body');
+    if (!modal) return;
+    if (body) {
+        const t = player.sliderPts || { atk: 3, range: 3, spd: 3, stun: 3, atkspd: 3 };
+        const cmb = player.comboRoute || { starter: 'flash_step', linker: 'spiral_slash', finisher: 'sky_upper' };
+        const ult = player.ultConfig || { form: 'meteor_drop', trait: 'vampire_heal' };
+        body.innerHTML =
+            `<div>🕸️ <strong>Graph Engineering (状態遷移＆相性グラフ)</strong>: 現在フィールド <code>東京・渋谷スクランブル交差点 (半径${arenaRadius}m)</code> | プレイヤー相性ノード: <strong>${ARCHETYPE_INFO[player.archetype]?.label}</strong> vs 敵ノード: <strong>${ARCHETYPE_INFO[cpu.archetype]?.label}</strong></div>` +
+            `<div>🪙 <strong>Token Graph (15トークン配分エッジ)</strong>: 🔴剛撃:${t.atk} 🟡覇道:${t.range} 🔵蒼迅:${t.spd} 🟢堅守:${t.stun} 🟣魔導:${t.atkspd} ➔ ATK <strong>${player.atkScale.toFixed(2)}x</strong> / 範囲 <strong>${player.attackRange.toFixed(1)}m</strong> / HP <strong>${player.maxHp} (+${player.hpRegen}/s)</strong></div>` +
+            `<div>⚔️ <strong>Combo & Ultimate DAG</strong>: [${COMBO_MOVE_EFFECTS[cmb.starter]?.label || cmb.starter}] ➔ [${COMBO_MOVE_EFFECTS[cmb.linker]?.label || cmb.linker}] ➔ [${COMBO_MOVE_EFFECTS[cmb.finisher]?.label || cmb.finisher}] | 奥義特性: <code>${ult.form} × ${ult.trait}</code></div>` +
+            `<div>🔄 <strong>Loop Engineering (自律進化テレメトリ)</strong>: 現在連勝 <strong>${currentWins} WIN</strong> (最高 ${highScore} WIN) | 累計与ダメ <strong>${battleStats.damageDealt.toLocaleString()}</strong> | 累計スタン <strong>${battleStats.stunsInflicted}回</strong> | 1週間継続進化ロードマップ: <code>PLATFORM_GRAPH_ROADMAP.md</code> 稼働中</div>`;
+    }
+    modal.style.display = 'flex';
+}
+
 function toggleAutoBattle() {
     isAutoBattle = !isAutoBattle;
     const btn = document.getElementById('btn-auto-toggle');
     if (btn) {
-        btn.innerText = isAutoBattle ? '🤖 AUTO対戦: ON' : '🎮 手動操作: ON';
+        btn.innerText = isAutoBattle ? '🤖 AUTO街バトル: ON' : '🎮 手動操作: ON';
         btn.classList.toggle('active', isAutoBattle);
     }
     showAnnouncement(
-        isAutoBattle ? '🤖 AUTO対戦 ON (登録AIガンビットで自動戦闘)' : '🎮 手動アクションモード ON',
+        isAutoBattle ? '🤖 AUTO街バトル ON (登録AIガンビットで渋谷ストリート自動戦闘)' : '🎮 手動アクションモード ON',
         isAutoBattle ? '#10b981' : '#ffd32a'
     );
 }
@@ -3120,7 +3427,7 @@ function toggleCinematicSpectator() {
     document.body.classList.toggle('cinematic-spectator', isCinematicSpectator);
     const btn = document.getElementById('btn-cinematic-mode');
     if (btn) {
-        btn.innerText = isCinematicSpectator ? '🎬 観戦カメラ: ON (UI非表示)' : '🎬 観戦カメラ';
+        btn.innerText = isCinematicSpectator ? '🎬 都市観戦カメラ: ON (UI非表示)' : '🎬 都市観戦カメラ';
     }
 }
 
@@ -3173,7 +3480,12 @@ function setupInputs() {
     bindPadBtn('btn-skl-dodge',  performPlayerDodge);
     bindPadBtn('btn-skl-jump',   performPlayerJump);
 
-    // 上部 監督・観戦コントロールバー
+    // 上部 監督・観戦コントロールバー ＆ 認定証・グラフ/ループボタン
+    document.getElementById('open-cert-btn')?.addEventListener('click', () => openCertificateModal('SURVIVAL'));
+    document.getElementById('btn-open-graph-loop')?.addEventListener('click', openGraphLoopModal);
+    document.getElementById('btn-close-graph-loop')?.addEventListener('click', () => {
+        document.getElementById('graph-loop-modal').style.display = 'none';
+    });
     document.getElementById('btn-auto-toggle')?.addEventListener('click', toggleAutoBattle);
     document.getElementById('btn-cinematic-mode')?.addEventListener('click', toggleCinematicSpectator);
     document.getElementById('btn-live-brag')?.addEventListener('click', () => shareOnX('survival'));

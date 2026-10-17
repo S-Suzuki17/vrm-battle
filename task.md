@@ -67,3 +67,16 @@ flowchart TD
 - [x] 4. **Unity 6 スクリプトの同期更新 (`SurvivalGameManager.cs`)**
 - [x] 5. **動作確認 ＆ GitHubへのプッシュ**
 
+---
+
+## フェーズ6：動画（`youtu.be/uk404c43pRY`「[Blender] 街をひと手間でそれっぽく作る」）準拠 — 「Blender 5.2 3D都市（東京・渋谷スクランブル交差点＆高層ビル群）バトルフィールド」構築
+
+- [ ] 1. **Blender 5.2 + Cycles による実在都市風3Dビル群モデル（`.glb`）＆ スクランブル交差点アスファルトテクスチャ生成 (`blender_city_generator.py`)**:
+  - GIS都市区画データ風に道路網とビル群フットプリントを立体押し出し（Extrude）し、窓ガラス発光・屋上設備・ネオン看板・街路樹・信号機を備えた3D都市モデル `assets/models/tokyo_city_stage.glb` をBlender 5.2で生成
+  - Blender 5.2 `CYCLES` レイトレーシングで「渋谷スクランブル交差点アスファルト＆白線横断歩道・マンホール・濡れ路面反射テクスチャ (`assets/renders/cycles_city_ground.png`)」「都市夜景＆夕景360°パノラマ環境マップ (`assets/renders/cycles_city_sky.png`)」「都市バトル背景 (`assets/renders/cycles_city_showcase.png`)」をレンダリング
+- [ ] 2. **Three.js フィールドを「東京・渋谷スクランブル交差点＆高層ビル街 (`createTokyoCityMetropolis`)」へ全面刷新 (`main.js`)**:
+  - `assets/models/tokyo_city_stage.glb` と `cycles_city_ground.png` / `cycles_city_sky.png` を統合し、ガードレール・街灯・信号機・ネオンビル・屋上航空障害灯・街路樹・濡れた路面のスペキュラ反射を備えたリアルな日本の大都会バトルフィールドを構築
+- [ ] 3. **都市タイムライン・カメラワーク演出 ＆ GitHub Pages 反映**
+
+
+

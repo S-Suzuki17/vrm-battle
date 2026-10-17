@@ -1333,3 +1333,47 @@ body {
     align-items: center;
 }
 
+/* ========================================================
+   🪙 5種類の専用トークン配分システム UI
+   ======================================================== */
+.token-alloc-card {
+    background: rgba(15, 23, 42, 0.72);
+    border: 1px solid rgba(56, 189, 248, 0.25);
+    border-radius: 7px;
+    padding: 5px 8px;
+}
+
+.token-ctrl-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+    margin-top: 3px;
+}
+
+.tok-btn {
+    background: linear-gradient(135deg, #1e293b, #0f172a);
+    color: #fff;
+    border: 1px solid #475569;
+    width: 26px;
+    height: 22px;
+    border-radius: 5px;
+    font-size: 13px;
+    font-weight: 900;
+    cursor: pointer;
+    line-height: 1;
+}
+
+.tok-btn:hover {
+    background: #38bdf8;
+    color: #000;
+    border-color: #fff;
+}
+
+.token-pips {
+    font-size: 13px;
+    letter-spacing: 2px;
+    user-select: none;
+}
+
+
