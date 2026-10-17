@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D自作キャラバトル (VRM対応)</title>
+    <link rel="stylesheet" href="style.css">
+    <!-- Import Maps: Three.js & three-vrm -->
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js",
+            "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/",
+            "@pixiv/three-vrm": "https://cdn.jsdelivr.net/npm/@pixiv/three-vrm@2.1.3/lib/three-vrm.module.js"
+        }
+    }
+    </script>
+</head>
+<body>
+
+<div class="container">
+    <header class="game-header">
+        <h1>⚔️ 3D 自作キャラバトル ⚔️</h1>
+        <p class="subtitle">ローカルの自作VRMアバターでCPUと3Dバトル！</p>
+    </header>
+
+    <!-- ステータスバー -->
+    <div class="stats-panel">
+        <div class="stat-card">
+            <span class="stat-label">現在の連勝数</span>
+            <span class="stat-value highlight" id="current-wins">0</span>
+            <span class="stat-unit">連勝</span>
+        </div>
+        <div class="stat-card">
+            <span class="stat-label">過去最高記録</span>
+            <span class="stat-value" id="high-score">0</span>
+            <span class="stat-unit">連勝</span>
+        </div>
+    </div>
+
+    <!-- 3Dバトルスクリーンコンテナ -->
+    <div class="battle-stage-wrapper" id="drop-area">
+        <!-- 3D Canvas がここに挿入される -->
+        <div id="three-canvas-container"></div>
+
+        <!-- HUDオーバーレイ -->
+        <div class="hud-overlay">
+            <div class="hud-char hud-player">
+                <div class="badge player-badge">PLAYER</div>
+                <div class="char-name" id="player-name">Cyber Bot (デフォルト)</div>
+                <div class="hp-bar-bg"><div class="hp-bar-fill" id="player-hp-bar"></div></div>
+            </div>
+            <div class="hud-vs">VS</div>
+            <div class="hud-char hud-cpu">
+                <div class="badge cpu-badge">CPU</div>
+                <div class="char-name" id="cpu-name">Lv.1 ロード中...</div>
+                <div class="char-style" id="cpu-type">---</div>
+                <div class="hp-bar-bg"><div class="hp-bar-fill" id="cpu-hp-bar"></div></div>
+            </div>
+        </div>
+
+        <!-- バトルエフェクト・アナウンス表示 -->
+        <div id="battle-announcement" class="announcement"></div>
+
+        <!-- VRMドラッグ＆ドロップ案内オーバーレイ -->
+        <div class="vrm-drop-hint" id="drop-hint">
+            <div class="drop-icon">📂</div>
+            <div class="drop-text">ここに .vrm ファイルをドラッグ＆ドロップ</div>
+            <div class="drop-subtext">または <label for="vrm-file-input" class="file-browse-btn">ファイルを選択</label></div>
+            <input type="file" id="vrm-file-input" accept=".vrm" style="display: none;">
+        </div>
+
+        <!-- ローディングインジケータ -->
+        <div id="loading-overlay" class="loading-overlay" style="display: none;">
+            <div class="spinner"></div>
+            <p id="loading-text">VRMを読み込み中...</p>
+        </div>
+    </div>
+
+    <!-- アバター情報バナー -->
+    <div class="avatar-info-panel" id="avatar-info-panel">
+        <span class="avatar-icon">👤</span>
+        <span id="avatar-status-text">現在：デフォルトアバター使用中（自作VRMをドロップで即座に召喚できます）</span>
+        <button id="reset-avatar-btn" class="btn-small" style="display: none;">デフォルトに戻す</button>
+    </div>
+
+    <!-- 操作ボタンエリア -->
+    <div id="action-area" class="control-panel">
+        <button id="btn-win" class="btn btn-action btn-attack">⚔️ バトルに勝つ！ (ATTACK)</button>
+        <button id="btn-lose" class="btn btn-action btn-surrender">負ける（ゲームオーバー）</button>
+    </div>
+
+    <!-- リザルト画面 -->
+    <div id="result-area" class="result-panel" style="display: none;">
+        <h2 class="gameover-title">💀 GAME OVER 💀</h2>
+        <p class="final-score">最終結果: <strong id="final-wins" style="color: #ffd32a; font-size: 28px;">0</strong> 連勝！</p>
+        <div class="result-buttons">
+            <button class="btn btn-sns" id="btn-share-x">𝕏 (Twitter) に記録を投稿する</button>
+            <button class="btn btn-retry" id="btn-retry">🔄 もう一度挑戦する</button>
+        </div>
+    </div>
+
+    <!-- カメラ操作ヘルプ -->
+    <p class="camera-hint">💡 3D画面内をドラッグするとカメラ視点を360度動かせます</p>
+
+    <!-- 防衛用の免責事項 -->
+    <footer class="disclaimer">
+        ※本ゲームはユーザーが選択した3Dモデルデータ（VRM）をブラウザ内（ローカルメモリ）でのみ一時的に処理・表示します。サーバーへのアップロードや共有は一切行われません。<br>
+        本ゲームのプレイ動画やスクリーンショットの公開によって生じた著作権・肖像権等のトラブルについて、当サイトは一切の責任を負いません。
+    </footer>
+</div>
+
+<script type="module" src="main.js"></script>
+
+</body>
+</html>
