@@ -1,74 +1,59 @@
-# 3D自作キャラバトル & Unity 6サバイバルシステム 開発計画
+# 3D自作キャラバトル — Blender 5.2 & Unity 6 ハイクオリティ化計画
 
 ## 概要
-1. Web版: Three.js & three-vrm によるアンリミ風3Dタイマンバトルゲーム（稼働中）
-2. Unity 6版: 「ユーザー自作キャラのインポート ＆ CPU連勝サバイバルシステム」のC#スクリプト構築
+PCにインストールされている **Blender 5.2.2 LTS** と **Unity 6 (6000.2.14f1)** を活用し、プロシージャルなプリミティブ表現から「本格的な3Dモデリングアセット（`.glb` / `.fbx`）＋ ポストプロセス発光（UnrealBloom）＋ Unity 6 フルアクション＆ワンクリックシーン構築」へと全面アップグレードする。
 
-## Unity 6 サバイバルシステム アーキテクチャ（Mermaid図）
+## アーキテクチャ & パイプライン（Mermaid図）
 
 ```mermaid
-flowchart TD
-    subgraph ImportSys ["① キャラクターインポート (UserCharacterLoader)"]
-        FileSelect["外部画像 (PNG/JPG) / キャラメイク"]
-        AsyncLoad["Texture2D 生成 (ImageConversion)"]
-        Apply["Renderer (Mesh) / SpriteRenderer / UI Image へ適用"]
-        DataHolder["シーン跨ぎ保持 (DontDestroyOnLoad / ScriptableObject)"]
+flowchart LR
+    subgraph Blender ["🎨 Blender 5.2.2 LTS (Headless Python)"]
+        BpyScript["blender_generate_assets.py"]
+        Colosseum["colosseum_arena (.glb / .fbx)\n石畳・溝付き古代円柱・破断柱・篝火・断崖"]
+        Fighter["fighter_cyber_knight (.glb / .fbx)\nベベル装甲・バイザー・発光コア・関節階層"]
+        Weapons["武器モデル4種 (.glb / .fbx)\n大剣・SFスナイパー・ナックル・念動オーブ"]
         
-        FileSelect --> AsyncLoad --> Apply
-        AsyncLoad --> DataHolder
+        BpyScript --> Colosseum
+        BpyScript --> Fighter
+        BpyScript --> Weapons
     end
 
-    subgraph SurvivalSys ["② CPU連勝サバイバル管理者 (SurvivalGameManager)"]
-        WinStreak["連勝カウンター (CurrentWinStreak)"]
-        TMP_UI["TextMeshPro UI 表示 ('〇連勝中！')"]
-        HealthCarry["プレイヤー体力引き継ぎ (全回復 / ボーナス割合回復 / そのまま)"]
-        ScaleDiff["CPU段階的強化 (HP・攻撃力・体幹・AI頻度 × 倍率)"]
-        GameOver["敗北時処理 (PlayerPrefs 最高記録保存 & リザルト表示)"]
-        
-        WinStreak --> TMP_UI
-        WinStreak --> ScaleDiff
+    subgraph WebApp ["🌐 Web 3D版 (Three.js + UnrealBloom + VRM)"]
+        GLTFLoader["GLTFLoader で Blender製モデル読込"]
+        PostProcess["EffectComposer + UnrealBloomPass (発光演出)"]
+        VRM["自作VRMアバター + Blender製武器装備"]
     end
 
-    subgraph BattleEvents ["既存戦闘システムとの連携"]
-        PlayerWin["ボス撃破 (OnPlayerWin)"]
-        PlayerLose["プレイヤー死亡 (OnPlayerLose)"]
-        NextRound["次ラウンド生成 (OnRoundStart)"]
+    subgraph Unity6 ["🎮 Unity 6 (6000.2.14f1) パッケージ"]
+        SceneBuilder["UnlimitedColosseumSceneBuilder.cs (Editor拡張)\nワンクリックでステージ・UI・照明・マネージャー構築"]
+        ActionCtrl["UnityPlayerActionController.cs & UnityCpuAIController.cs\nUnity上で動くアンリミ風3Dアクション・コンボ・必殺技"]
+        SurvivalSys["SurvivalGameManager.cs & UserCharacterLoader.cs"]
     end
 
-    PlayerWin --> WinStreak
-    PlayerWin --> HealthCarry
-    PlayerWin --> NextRound
-    PlayerLose --> GameOver
-    ScaleDiff --> NextRound
+    Colosseum --> GLTFLoader
+    Fighter --> GLTFLoader
+    Weapons --> GLTFLoader
+    
+    Colosseum --> SceneBuilder
+    Fighter --> SceneBuilder
+    Weapons --> SceneBuilder
+    SceneBuilder --> ActionCtrl
+    SceneBuilder --> SurvivalSys
 ```
 
 ## タスク進捗
 
-### Web版 (完了)
-- [x] 1. 古代遺跡コロシアム & 大海原ステージ
-- [x] 2. プレイヤー操作 (コンボ, 必殺技, ガード, 回避, ロックオン)
-- [x] 3. HP/SPゲージ & アンリミ風HUD
-- [x] 4. CPU AI & 4スタイル
-- [x] 5. VRMローカルD&D読み込み
-- [x] 6. ローカルサーバー & GitHub Pages公開
-
-### Unity 6 C#システム (完了)
-- [x] 7. **`UserCharacterLoader.cs` の実装**:
-  - 外部画像（PNG/JPG/バイト配列）の非同期ロード
-  - URP (`_BaseMap`) & Built-in (`_MainTex`) 両対応のテクスチャ動的適用
-  - 2Dスプライト・UI画像への適用
-  - `DontDestroyOnLoad` によるシーン間データ永続化（名前、カラー、テクスチャ）
-- [x] 8. **`SurvivalGameManager.cs` の実装**:
-  - `CurrentWinStreak` カウント & TextMeshPro UI 更新
-  - プレイヤー体力引き継ぎオプション（全回復 / 割合ボーナス回復 / そのまま）
-  - CPUステータスの段階的強化倍率計算（最大HP、攻撃力、体幹ゲージ、AI行動インターバル）
-  - ゲームオーバー時の `PlayerPrefs` ハイスコア保存 & リザルト表示
-  - `OnPlayerWin()` / `OnPlayerLose()` イベントAPI
-- [x] 9. **補助クラス・データモデル**:
-  - `UserCharacterData.cs` (シリアライズ可能なキャラデータ)
-  - `UserCharacterDataSO.cs` (ScriptableObjectラッパー)
-  - `CpuBattleStats.cs` (CPUステータス定義)
-  - `IBattleEntity.cs` (汎用ヘルス・ステータス連携インターフェース)
-  - `SampleBattleEntity.cs` (即座に動作するサンプルコンポーネント)
-- [x] 10. **GitHubへのコミット & プッシュ**:
-  - Unityスクリプトをリポジトリへ反映、ドキュメント更新
+- [x] 1. **Blender 5.2 アセット生成スクリプト (`blender_generate_assets.py`) の作成と実行**:
+  - `colosseum_arena.glb` / `.fbx`: 彫刻柱、壊れた柱と瓦礫、階段、レリーフ床、篝火台座、断崖岩肌
+  - `fighter_cyber_knight.glb` / `.fbx`: 関節構造付きアーマーファイター
+  - `weapon_greatsword.glb`, `weapon_sniper_rifle.glb`, `weapon_psy_orb.glb` (および `.fbx`)
+- [x] 2. **Web版 (`main.js`, `style.css`, `index.html`) のクオリティアップ**:
+  - Blender製 `.glb` アセットの組み込み（ステージ・キャラクター・武器）
+  - `EffectComposer` + `UnrealBloomPass` による本格ポストプロセス発光（松明・必殺技・コア・斬撃）
+  - 攻撃ヒット演出・カメラワーク・UIディテールの強化
+- [x] 3. **Unity 6 フルアクション＆ワンクリックシーン構築スクリプト群の実装**:
+  - `UnityPlayerActionController.cs`: Unity 6上でWASD移動・3段コンボ・ガード・回避・必殺技を動かすプレイヤースクリプト
+  - `UnityCpuAIController.cs`: 連勝数スケーリングと連動するCPU戦闘AIスクリプト
+  - `UnlimitedColosseumSceneBuilder.cs` (Editor拡張): メニューから1クリックでBlenderモデル・アンリミ風HUD・ライティング・サバイバルシステムを全自動配置するエディタツール
+- [x] 4. **検証・ビルド確認 & GitHubプッシュ**:
+  - Blender出力モデルのファイル検証、ローカルサーバーでの配信確認、GitHubへのコミット＆プッシュ

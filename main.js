@@ -1,9 +1,12 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { VRMLoaderPlugin, VRMUtils } from '@pixiv/three-vrm';
 
 // ========================================================
-// 1. ゲーム設定 & マスターデータ (アンリミテッド・タイマン)
+// 1. ゲーム設定 & マスターデータ (Blender 5.2 & アンリミ仕様)
 // ========================================================
 const CPU_STYLES = [
     { type: "近接型（武器ナシ）", suffix: "拳法家", detail: "高速コンボラッシュ & ステップ回避", category: "melee-bare" },
@@ -12,7 +15,7 @@ const CPU_STYLES = [
     { type: "狙撃型（武器アリ）", suffix: "スナイパー", detail: "遠距離高速ライフル & バックステップ", category: "snipe-weapon" }
 ];
 
-const ENEMY_NAMES = ["ドロイド", "シャドウ", "ギガント", "ハンター", "ヴァルキリー", "プロトタイプ"];
+const ENEMY_NAMES = ["ドロイド", "シャドウ", "ギガント", "ハンター", "ヴァルキリー", "プロトタイプ", "ベルセルク", "ファントム"];
 
 // ゲーム状態
 let currentWins = 0;
@@ -21,37 +24,48 @@ let currentCpuInfo = {};
 let isGameActive = true;
 let isKoSlowMo = false;
 let slowMoTimer = 0;
+let cameraShakeIntensity = 0;
 
 // コンボ管理
 let comboHits = 0;
 let comboDamage = 0;
 let comboTimer = null;
 
-// 3D環境
-let scene, camera, renderer;
+// 3D環境 & ポストプロセス
+let scene, camera, renderer, composer;
 let clock = new THREE.Clock();
 
+// Blender 5.2 生成アセットのキャッシュ
+const blenderCache = {
+    fighterScene: null,
+    greatswordScene: null,
+    sniperRifleScene: null,
+    psyOrbScene: null,
+    loaded: false
+};
+
 // ステージ要素
-let arenaRadius = 11.0;
+let arenaRadius = 10.2;
 let torchFlames = [];
 let seaWaterMesh = null;
-let effectsList = []; // 衝撃波・スパーク・弾丸など
+let effectsList = [];
 
 // プレイヤー管理オブジェクト
 const player = {
     group: null,
     mesh: null,
+    joints: {},
     vrm: null,
     isVrm: false,
     hp: 1000,
     maxHp: 1000,
     sp: 50,
     maxSp: 100,
-    position: new THREE.Vector3(-4, 0, 0),
+    position: new THREE.Vector3(-4.2, 0, 0),
     rotationY: Math.PI / 2,
     velocity: new THREE.Vector3(),
-    speed: 6.5,
-    state: "idle", // idle, move, attack, special, guard, dodge, damaged, down
+    speed: 6.8,
+    state: "idle",
     stateTimer: 0,
     comboStep: 0,
     isGuarding: false,
@@ -64,13 +78,14 @@ const player = {
 const cpu = {
     group: null,
     mesh: null,
+    joints: {},
     weaponMesh: null,
     orbs: [],
     hp: 1000,
     maxHp: 1000,
     sp: 20,
     maxSp: 100,
-    position: new THREE.Vector3(4, 0, 0),
+    position: new THREE.Vector3(4.2, 0, 0),
     rotationY: -Math.PI / 2,
     velocity: new THREE.Vector3(),
     speed: 4.8,
@@ -81,7 +96,7 @@ const cpu = {
     guardBarrierMesh: null,
     aiTimer: 0,
     aiAction: "idle",
-    styleInfo: null,
+    styleInfo: CPU_STYLES[1],
     animTime: 0
 };
 
@@ -97,18 +112,18 @@ const input = {
 };
 
 // ========================================================
-// 2. Three.js 初期化 & アンリミ風古代遺跡コロシアム生成
+// 2. Three.js 初期化 & UnrealBloom ポストプロセス & Blenderアセット読込
 // ========================================================
-function initScene() {
+async function initScene() {
     const container = document.getElementById('three-canvas-container');
     const width = container.clientWidth || window.innerWidth;
     const height = container.clientHeight || window.innerHeight;
 
     scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x3a506b); // 海と空の境界カラー
-    scene.fog = new THREE.FogExp2(0x4a6572, 0.025);
+    scene.background = new THREE.Color(0x1e2f42);
+    scene.fog = new THREE.FogExp2(0x2a3f54, 0.022);
 
-    camera = new THREE.PerspectiveCamera(50, width / height, 0.1, 200);
+    camera = new THREE.PerspectiveCamera(50, width / height, 0.1, 250);
     camera.position.set(0, 4.5, 9);
 
     renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
@@ -117,35 +132,42 @@ function initScene() {
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.15;
+    renderer.toneMappingExposure = 1.1;
     container.appendChild(renderer.domElement);
 
-    // ライティング（地中海・遺跡の力強い太陽光）
-    const ambientLight = new THREE.AmbientLight(0xfff5e6, 1.1);
-    scene.add(ambientLight);
+    // UnrealBloomPass (ポストプロセス発光)
+    const renderScene = new RenderPass(scene, camera);
+    const bloomPass = new UnrealBloomPass(
+        new THREE.Vector2(width, height),
+        0.55, // strength
+        0.4,  // radius
+        0.75  // threshold
+    );
+    composer = new EffectComposer(renderer);
+    composer.addPass(renderScene);
+    composer.addPass(bloomPass);
 
-    const sunLight = new THREE.DirectionalLight(0xffffff, 2.2);
-    sunLight.position.set(12, 20, 10);
+    // ライティング（太陽のディレクショナルライト＋環境光＋半球光）
+    const hemiLight = new THREE.HemisphereLight(0xffeedd, 0x223344, 1.15);
+    scene.add(hemiLight);
+
+    const sunLight = new THREE.DirectionalLight(0xfff4e0, 2.5);
+    sunLight.position.set(14, 24, 12);
     sunLight.castShadow = true;
-    sunLight.shadow.mapSize.width = 1024;
-    sunLight.shadow.mapSize.height = 1024;
+    sunLight.shadow.mapSize.width = 2048;
+    sunLight.shadow.mapSize.height = 2048;
     sunLight.shadow.camera.near = 0.5;
-    sunLight.shadow.camera.far = 50;
-    const d = 14;
+    sunLight.shadow.camera.far = 60;
+    const d = 15;
     sunLight.shadow.camera.left = -d;
     sunLight.shadow.camera.right = d;
     sunLight.shadow.camera.top = d;
     sunLight.shadow.camera.bottom = -d;
     scene.add(sunLight);
 
-    // アンリミテッドクルーズ風のフィールド構築
-    buildUnlimitedField();
-
-    // プレイヤーとCPUのグループ作成
+    // プレイヤーとCPUのグループ準備
     player.group = new THREE.Group();
     scene.add(player.group);
-    player.mesh = createCyberBot(0x00d2d3, 0x1e90ff);
-    player.group.add(player.mesh);
     player.guardBarrierMesh = createBarrierMesh(0x00d2d3);
     player.group.add(player.guardBarrierMesh);
 
@@ -154,125 +176,47 @@ function initScene() {
     cpu.guardBarrierMesh = createBarrierMesh(0xff4757);
     cpu.group.add(cpu.guardBarrierMesh);
 
-    // リサイズ
-    window.addEventListener('resize', onResize);
+    // 海と松明ライトを構築し、Blender 5.2 で生成した GLB モデル群をロード
+    buildOceanAndTorchLights();
+    await loadBlenderModels();
 
-    // メインループ
+    // プレイヤー初期モデルの配置
+    setupPlayerMeshFromBlender();
+
+    // 初回CPUの生成
+    spawnNextCpu();
+
+    window.addEventListener('resize', onResize);
     animate();
 }
 
-// アンリミテッドクルーズの怠慢バトルステージ（古代遺跡コロシアム＆大海原）
-function buildUnlimitedField() {
-    // 1. 大海原 (海面)
-    const oceanGeo = new THREE.PlaneGeometry(300, 300, 32, 32);
+// 大海原と4基の松明エフェクト＆ライト構築
+function buildOceanAndTorchLights() {
+    const oceanGeo = new THREE.PlaneGeometry(350, 350, 48, 48);
     const oceanMat = new THREE.MeshStandardMaterial({
-        color: 0x133852,
-        roughness: 0.1,
-        metalness: 0.8
+        color: 0x0d2b45,
+        roughness: 0.15,
+        metalness: 0.85
     });
     seaWaterMesh = new THREE.Mesh(oceanGeo, oceanMat);
     seaWaterMesh.rotation.x = -Math.PI / 2;
     seaWaterMesh.position.y = -8.0;
     scene.add(seaWaterMesh);
 
-    // 2. 絶壁の台座島 (コロシアムの下の巨大な岩山)
-    const rockGeo = new THREE.CylinderGeometry(arenaRadius + 0.5, arenaRadius + 4.0, 9.0, 24);
-    const rockMat = new THREE.MeshStandardMaterial({
-        color: 0x474747,
-        roughness: 0.9,
-        metalness: 0.1
-    });
-    const rockBase = new THREE.Mesh(rockGeo, rockMat);
-    rockBase.position.y = -4.5;
-    rockBase.receiveShadow = true;
-    scene.add(rockBase);
-
-    // 3. 古代石造りコロシアムの石畳床
-    const floorGeo = new THREE.CylinderGeometry(arenaRadius, arenaRadius, 0.4, 36);
-    const floorMat = new THREE.MeshStandardMaterial({
-        color: 0xc8b88a, // 古代の砂岩・石畳
-        roughness: 0.65,
-        metalness: 0.15
-    });
-    const floor = new THREE.Mesh(floorGeo, floorMat);
-    floor.position.y = -0.2;
-    floor.receiveShadow = true;
-    scene.add(floor);
-
-    // 4. 床面のレリーフ装飾サークル
-    const ringGeo1 = new THREE.RingGeometry(arenaRadius * 0.88, arenaRadius * 0.92, 48);
-    const ringMat = new THREE.MeshStandardMaterial({ color: 0x8a795d, roughness: 0.5, side: THREE.DoubleSide });
-    const ring1 = new THREE.Mesh(ringGeo1, ringMat);
-    ring1.rotation.x = -Math.PI / 2;
-    ring1.position.y = 0.01;
-    scene.add(ring1);
-
-    const ringGeo2 = new THREE.RingGeometry(arenaRadius * 0.4, arenaRadius * 0.43, 40);
-    const ring2 = new THREE.Mesh(ringGeo2, ringMat);
-    ring2.rotation.x = -Math.PI / 2;
-    ring2.position.y = 0.01;
-    scene.add(ring2);
-
-    // 5. 古代石柱群 (8本、神殿風の円柱、破損した柱も配置)
-    const pillarGeo = new THREE.CylinderGeometry(0.55, 0.65, 5.5, 16);
-    const brokenPillarGeo = new THREE.CylinderGeometry(0.55, 0.65, 2.6, 16);
-    const pillarMat = new THREE.MeshStandardMaterial({ color: 0xb5a788, roughness: 0.7 });
-
-    const pillarAngles = [0, 45, 90, 135, 180, 225, 270, 315];
-    pillarAngles.forEach((deg, idx) => {
-        const rad = THREE.MathUtils.degToRad(deg);
-        const r = arenaRadius - 0.7;
-        const x = Math.cos(rad) * r;
-        const z = Math.sin(rad) * r;
-
-        const isBroken = idx === 1 || idx === 5;
-        const pMesh = new THREE.Mesh(isBroken ? brokenPillarGeo : pillarGeo, pillarMat);
-        pMesh.position.set(x, isBroken ? 1.3 : 2.75, z);
-        pMesh.castShadow = true;
-        pMesh.receiveShadow = true;
-
-        if (isBroken) {
-            pMesh.rotation.z = (Math.random() - 0.5) * 0.2;
-            pMesh.rotation.x = (Math.random() - 0.5) * 0.2;
-        }
-
-        // 柱の頭部装飾 (Capital)
-        if (!isBroken) {
-            const cap = new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.35, 1.4), pillarMat);
-            cap.position.set(x, 5.4, z);
-            cap.castShadow = true;
-            scene.add(cap);
-        }
-        scene.add(pMesh);
-    });
-
-    // 6. 燃え盛る古代トーチ・松明 (4基)
+    // Blenderのコロシアム上の4基の篝火位置に合わせて動的な炎パーティクル＆PointLightを配置
     const torchAngles = [30, 150, 210, 330];
+    const r = 11.0 * 0.75;
     torchAngles.forEach(deg => {
         const rad = THREE.MathUtils.degToRad(deg);
-        const r = arenaRadius * 0.75;
         const x = Math.cos(rad) * r;
         const z = Math.sin(rad) * r;
 
-        // 石の台座
-        const stand = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.35, 1.8, 12), pillarMat);
-        stand.position.set(x, 0.9, z);
-        stand.castShadow = true;
-        scene.add(stand);
-
-        // 松明の鉢
-        const bowl = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.15, 0.3, 12), new THREE.MeshStandardMaterial({ color: 0x333333 }));
-        bowl.position.set(x, 1.85, z);
-        scene.add(bowl);
-
-        // 炎の光（PointLight）
-        const fireLight = new THREE.PointLight(0xff6b35, 2.5, 7.0);
-        fireLight.position.set(x, 2.1, z);
+        const fireLight = new THREE.PointLight(0xff6b22, 4.5, 9.5);
+        fireLight.position.set(x, 2.35, z);
         scene.add(fireLight);
 
-        // 炎パーティクル
-        const flameGeo = new THREE.DodecahedronGeometry(0.25);
-        const flameMat = new THREE.MeshBasicMaterial({ color: 0xffa502 });
+        const flameGeo = new THREE.OctahedronGeometry(0.26, 1);
+        const flameMat = new THREE.MeshBasicMaterial({ color: 0xffaa00 });
         const flameMesh = new THREE.Mesh(flameGeo, flameMat);
         flameMesh.position.set(x, 2.1, z);
         scene.add(flameMesh);
@@ -281,9 +225,108 @@ function buildUnlimitedField() {
     });
 }
 
+// Blender 5.2 で生成された GLB モデル群の非同期ロード
+async function loadBlenderModels() {
+    const loader = new GLTFLoader();
+    const loadGlb = (path) => new Promise((resolve) => {
+        loader.load(path, gltf => resolve(gltf.scene), undefined, () => resolve(null));
+    });
+
+    const [arenaScene, fighterScene, swordScene, rifleScene, orbScene] = await Promise.all([
+        loadGlb('assets/models/colosseum_arena.glb'),
+        loadGlb('assets/models/fighter_cyber_knight.glb'),
+        loadGlb('assets/models/weapon_greatsword.glb'),
+        loadGlb('assets/models/weapon_sniper_rifle.glb'),
+        loadGlb('assets/models/weapon_psy_orb.glb')
+    ]);
+
+    if (arenaScene) {
+        arenaScene.traverse(child => {
+            if (child.isMesh) {
+                child.castShadow = true;
+                child.receiveShadow = true;
+            }
+        });
+        scene.add(arenaScene);
+    }
+
+    blenderCache.fighterScene = fighterScene;
+    blenderCache.greatswordScene = swordScene;
+    blenderCache.sniperRifleScene = rifleScene;
+    blenderCache.psyOrbScene = orbScene;
+    blenderCache.loaded = true;
+}
+
+// Blender製アーマーファイターをクローン＆カラーカスタマイズして関節を取得
+function createFighterInstance(mainColorHex, glowColorHex) {
+    if (!blenderCache.fighterScene) {
+        // 万一のフォールバック
+        const g = new THREE.Group();
+        const box = new THREE.Mesh(new THREE.BoxGeometry(0.5, 1.5, 0.3), new THREE.MeshStandardMaterial({ color: mainColorHex }));
+        box.position.y = 0.75;
+        g.add(box);
+        return { root: g, joints: {} };
+    }
+
+    const root = blenderCache.fighterScene.clone(true);
+    const joints = {};
+
+    root.traverse(child => {
+        if (child.name === "LeftArm") joints.leftArm = child;
+        if (child.name === "RightArm") joints.rightArm = child;
+        if (child.name === "LeftLeg") joints.leftLeg = child;
+        if (child.name === "RightLeg") joints.rightLeg = child;
+        if (child.name === "Torso") joints.torso = child;
+
+        if (child.isMesh && child.material) {
+            child.castShadow = true;
+            child.receiveShadow = true;
+            child.material = child.material.clone();
+            if (child.material.name.includes("ArmorMain")) {
+                child.material.color.setHex(mainColorHex);
+            } else if (child.material.name.includes("VisorGlow")) {
+                child.material.color.setHex(glowColorHex);
+                if (child.material.emissive) {
+                    child.material.emissive.setHex(glowColorHex);
+                    child.material.emissiveIntensity = 3.5;
+                }
+            }
+        }
+    });
+
+    return { root, joints };
+}
+
+function setupPlayerMeshFromBlender() {
+    if (player.mesh) player.group.remove(player.mesh);
+    const { root, joints } = createFighterInstance(0x1e90ff, 0x00ffff);
+    player.mesh = root;
+    player.joints = joints;
+    player.mesh.visible = !player.isVrm;
+    player.group.add(player.mesh);
+
+    // プレイヤーにも右手用の光のブレイドを装備
+    if (blenderCache.greatswordScene && joints.rightArm) {
+        const pSword = blenderCache.greatswordScene.clone(true);
+        pSword.scale.set(0.8, 0.8, 0.8);
+        pSword.position.set(0.36, -0.35, 0.25);
+        pSword.rotation.x = Math.PI / 2.2;
+        pSword.traverse(c => {
+            if (c.isMesh && c.material) {
+                c.material = c.material.clone();
+                if (c.material.name.includes("CrimsonCore")) {
+                    c.material.color.setHex(0x00ffff);
+                    if (c.material.emissive) c.material.emissive.setHex(0x00ffff);
+                }
+            }
+        });
+        joints.rightArm.add(pSword);
+    }
+}
+
 // 防御バリアエフェクト
 function createBarrierMesh(colorHex) {
-    const geo = new THREE.SphereGeometry(1.2, 16, 16);
+    const geo = new THREE.IcosahedronGeometry(1.18, 2);
     const mat = new THREE.MeshBasicMaterial({
         color: colorHex,
         wireframe: true,
@@ -295,110 +338,47 @@ function createBarrierMesh(colorHex) {
     return barrier;
 }
 
-// プレースホルダー用サイバーボット
-function createCyberBot(mainColorHex, accentColorHex) {
-    const group = new THREE.Group();
-    const bodyMat = new THREE.MeshStandardMaterial({ color: mainColorHex, roughness: 0.3, metalness: 0.6 });
-    const accentMat = new THREE.MeshBasicMaterial({ color: accentColorHex });
-    const darkMat = new THREE.MeshStandardMaterial({ color: 0x1f2430, roughness: 0.5 });
-
-    // 胴体
-    const torso = new THREE.Mesh(new THREE.BoxGeometry(0.45, 0.55, 0.3), bodyMat);
-    torso.position.y = 0.95;
-    group.add(torso);
-
-    // コア発光
-    const core = new THREE.Mesh(new THREE.SphereGeometry(0.1, 16, 16), accentMat);
-    core.position.set(0, 1.0, 0.16);
-    group.add(core);
-
-    // 頭部
-    const head = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.32, 0.32), darkMat);
-    head.position.y = 1.45;
-    group.add(head);
-
-    // バイザー
-    const visor = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.08, 0.05), accentMat);
-    visor.position.set(0, 1.46, 0.16);
-    group.add(visor);
-
-    // 腕
-    const armGeo = new THREE.BoxGeometry(0.12, 0.45, 0.12);
-    const leftArm = new THREE.Mesh(armGeo, bodyMat);
-    leftArm.position.set(-0.35, 0.95, 0);
-    leftArm.name = "leftArm";
-    group.add(leftArm);
-
-    const rightArm = new THREE.Mesh(armGeo, bodyMat);
-    rightArm.position.set(0.35, 0.95, 0);
-    rightArm.name = "rightArm";
-    group.add(rightArm);
-
-    // 脚
-    const legGeo = new THREE.BoxGeometry(0.14, 0.65, 0.14);
-    const leftLeg = new THREE.Mesh(legGeo, darkMat);
-    leftLeg.position.set(-0.16, 0.35, 0);
-    leftLeg.name = "leftLeg";
-    group.add(leftLeg);
-
-    const rightLeg = new THREE.Mesh(legGeo, darkMat);
-    rightLeg.position.set(0.16, 0.35, 0);
-    rightLeg.name = "rightLeg";
-    group.add(rightLeg);
-
-    group.traverse(child => {
-        if (child.isMesh) {
-            child.castShadow = true;
-            child.receiveShadow = true;
-        }
-    });
-
-    return group;
-}
-
 // ========================================================
-// 3. CPUの3D外見 & 武器セットアップ
+// 3. CPUの3Dモデル & Blender製専用武器の装備
 // ========================================================
-function setupCpuModel(styleInfo, level) {
+function setupCpuModel(styleInfo) {
     if (cpu.mesh) cpu.group.remove(cpu.mesh);
-    if (cpu.weaponMesh) cpu.group.remove(cpu.weaponMesh);
+    if (cpu.weaponMesh && cpu.weaponMesh.parent) cpu.weaponMesh.parent.remove(cpu.weaponMesh);
     cpu.orbs.forEach(o => cpu.group.remove(o.mesh));
     cpu.orbs = [];
     cpu.weaponMesh = null;
 
-    let mainColor = 0xff4757;
-    let accentColor = 0xffa502;
+    let mainColor = 0xd63031;
+    let glowColor = 0xffa502;
     if (styleInfo.category.includes("snipe")) {
-        mainColor = 0x8e44ad;
-        accentColor = 0x00d2d3;
+        mainColor = 0x6c5ce7;
+        glowColor = 0x00d2d3;
+    } else if (styleInfo.category === "melee-bare") {
+        mainColor = 0xe17055;
+        glowColor = 0xffdd59;
     }
 
-    cpu.mesh = createCyberBot(mainColor, accentColor);
+    const { root, joints } = createFighterInstance(mainColor, glowColor);
+    cpu.mesh = root;
+    cpu.joints = joints;
     cpu.group.add(cpu.mesh);
 
-    // スタイル別装備
-    if (styleInfo.category === "melee-weapon") {
-        // 大剣
-        const bladeGeo = new THREE.BoxGeometry(0.1, 1.2, 0.3);
-        const bladeMat = new THREE.MeshStandardMaterial({ color: 0xe74c3c, emissive: 0x7f1d1d, metalness: 0.8 });
-        const sword = new THREE.Mesh(bladeGeo, bladeMat);
-        sword.position.set(0.45, 1.05, 0.2);
-        sword.rotation.x = Math.PI / 5;
-        cpu.group.add(sword);
+    const attachParent = joints.rightArm || cpu.group;
+
+    if (styleInfo.category === "melee-weapon" && blenderCache.greatswordScene) {
+        const sword = blenderCache.greatswordScene.clone(true);
+        sword.position.set(-0.36, -0.35, 0.25);
+        sword.rotation.x = Math.PI / 2.2;
+        attachParent.add(sword);
         cpu.weaponMesh = sword;
-    } else if (styleInfo.category === "snipe-weapon") {
-        // ライフル
-        const rifle = new THREE.Group();
-        const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 1.2), new THREE.MeshStandardMaterial({ color: 0x2c3e50, metalness: 0.9 }));
-        barrel.rotation.x = Math.PI / 2;
-        barrel.position.set(0.38, 0.95, 0.4);
-        rifle.add(barrel);
-        cpu.group.add(rifle);
+    } else if (styleInfo.category === "snipe-weapon" && blenderCache.sniperRifleScene) {
+        const rifle = blenderCache.sniperRifleScene.clone(true);
+        rifle.position.set(-0.36, -0.30, 0.20);
+        attachParent.add(rifle);
         cpu.weaponMesh = rifle;
-    } else if (styleInfo.category === "snipe-bare") {
-        // 浮遊オーブ
+    } else if (styleInfo.category === "snipe-bare" && blenderCache.psyOrbScene) {
         for (let i = 0; i < 3; i++) {
-            const orb = new THREE.Mesh(new THREE.DodecahedronGeometry(0.12), new THREE.MeshStandardMaterial({ color: 0x9b59b6, emissive: 0x8e44ad }));
+            const orb = blenderCache.psyOrbScene.clone(true);
             cpu.group.add(orb);
             cpu.orbs.push({ mesh: orb, angleOffset: (i * Math.PI * 2) / 3 });
         }
@@ -470,7 +450,6 @@ function loadVrmFile(file) {
             VRMUtils.removeUnnecessaryVertices(gltf.scene);
             VRMUtils.removeUnnecessaryJoints(gltf.scene);
 
-            // 既存プレースホルダー非表示 & 前のVRM破棄
             if (player.vrm) {
                 player.group.remove(player.vrm.scene);
                 VRMUtils.deepDispose(player.vrm.scene);
@@ -479,7 +458,7 @@ function loadVrmFile(file) {
 
             player.vrm = vrm;
             player.isVrm = true;
-            vrm.scene.rotation.y = Math.PI; // 前向き
+            vrm.scene.rotation.y = Math.PI;
             vrm.scene.traverse(obj => {
                 if (obj.isMesh) {
                     obj.castShadow = true;
@@ -487,7 +466,6 @@ function loadVrmFile(file) {
                 }
             });
 
-            // ポーズ初期化
             try {
                 if (vrm.humanoid) {
                     const lArm = vrm.humanoid.getNormalizedBoneNode('leftUpperArm');
@@ -499,7 +477,6 @@ function loadVrmFile(file) {
 
             player.group.add(vrm.scene);
 
-            // UI更新
             const title = vrm.meta?.title || file.name.replace('.vrm', '');
             document.getElementById('player-name').innerText = title;
             document.getElementById('player-avatar-icon').innerText = '🦸';
@@ -527,22 +504,21 @@ function restoreDefaultPlayer() {
     }
     if (player.mesh) player.mesh.visible = true;
 
-    document.getElementById('player-name').innerText = "Cyber Bot";
-    document.getElementById('player-avatar-icon').innerText = '👤';
-    document.getElementById('avatar-status-text').innerText = "現在: デフォルトアバター (Cyber Bot)";
+    document.getElementById('player-name').innerText = "Cyber Knight";
+    document.getElementById('player-avatar-icon').innerText = '⚔️';
+    document.getElementById('avatar-status-text').innerText = "現在: Blender 5.2 アーマーナイト (VRMドロップ対応)";
     document.getElementById('reset-avatar-btn').style.display = 'none';
-    showAnnouncement("デフォルトに戻しました", "#ced6e0");
+    showAnnouncement("デフォルトアーマーに戻しました", "#ced6e0");
 }
 
 // ========================================================
-// 5. バトルアクション & エフェクト & コンボロジック
+// 5. バトルアクション & ブルーム発光エフェクト & コンボロジック
 // ========================================================
 function spawnDamageNumber(x, y, z, damage, type = "normal") {
     const layer = document.getElementById('damage-numbers-layer');
     if (!layer) return;
 
-    // 3D座標から2Dスクリーン座標へ投影
-    const pos = new THREE.Vector3(x, y + 1.2, z);
+    const pos = new THREE.Vector3(x, y + 1.4, z);
     pos.project(camera);
     const screenX = (pos.x * 0.5 + 0.5) * window.innerWidth;
     const screenY = (-(pos.y * 0.5) + 0.5) * window.innerHeight;
@@ -559,36 +535,35 @@ function spawnDamageNumber(x, y, z, damage, type = "normal") {
     }, 800);
 }
 
-// スラッシュ/斬撃エフェクト生成
+// 発光スラッシュエフェクト & ヒットスパーク
 function createSlashEffect(origin, targetPos, color = 0xffd32a, size = 1.0) {
-    const slashGeo = new THREE.RingGeometry(0.2, 0.9 * size, 16, 1, 0, Math.PI * 0.9);
+    const slashGeo = new THREE.RingGeometry(0.35, 1.15 * size, 24, 1, 0, Math.PI * 1.05);
     const slashMat = new THREE.MeshBasicMaterial({
         color: color,
         side: THREE.DoubleSide,
         transparent: true,
-        opacity: 0.9
+        opacity: 0.95
     });
     const slash = new THREE.Mesh(slashGeo, slashMat);
-    slash.position.copy(origin).add(new THREE.Vector3(0, 1.0, 0));
-    slash.lookAt(targetPos);
+    slash.position.copy(origin).add(new THREE.Vector3(0, 1.05, 0));
+    slash.lookAt(targetPos.x, 1.05, targetPos.z);
     slash.rotation.z = (Math.random() - 0.5) * Math.PI;
     scene.add(slash);
 
     effectsList.push({
         mesh: slash,
-        life: 0.2,
-        maxLife: 0.2,
+        life: 0.22,
+        maxLife: 0.22,
         update: (dt, item) => {
-            item.mesh.scale.multiplyScalar(1.15);
-            item.mesh.material.opacity = (item.life / item.maxLife) * 0.9;
+            item.mesh.scale.multiplyScalar(1.14);
+            item.mesh.material.opacity = (item.life / item.maxLife) * 0.95;
         }
     });
 }
 
 // 必殺技の超巨大爆発/衝撃波
 function createSpecialExplosion(pos) {
-    // 巨大な光球
-    const sphereGeo = new THREE.SphereGeometry(2.4, 24, 24);
+    const sphereGeo = new THREE.IcosahedronGeometry(2.2, 2);
     const sphereMat = new THREE.MeshBasicMaterial({
         color: 0xffd32a,
         wireframe: true,
@@ -596,22 +571,21 @@ function createSpecialExplosion(pos) {
         opacity: 1.0
     });
     const boom = new THREE.Mesh(sphereGeo, sphereMat);
-    boom.position.copy(pos).add(new THREE.Vector3(0, 1.0, 0));
+    boom.position.copy(pos).add(new THREE.Vector3(0, 1.1, 0));
     scene.add(boom);
 
-    // 地面の衝撃波リング
-    const shockGeo = new THREE.RingGeometry(0.5, 4.0, 32);
-    const shockMat = new THREE.MeshBasicMaterial({ color: 0xff4757, side: THREE.DoubleSide, transparent: true, opacity: 0.9 });
+    const shockGeo = new THREE.RingGeometry(0.6, 4.2, 36);
+    const shockMat = new THREE.MeshBasicMaterial({ color: 0xff4757, side: THREE.DoubleSide, transparent: true, opacity: 0.95 });
     const shock = new THREE.Mesh(shockGeo, shockMat);
     shock.rotation.x = -Math.PI / 2;
-    shock.position.copy(pos).add(new THREE.Vector3(0, 0.05, 0));
+    shock.position.copy(pos).add(new THREE.Vector3(0, 0.08, 0));
     scene.add(shock);
 
     effectsList.push({
         mesh: boom,
         shock: shock,
-        life: 0.6,
-        maxLife: 0.6,
+        life: 0.65,
+        maxLife: 0.65,
         update: (dt, item) => {
             item.mesh.scale.multiplyScalar(1.12);
             item.shock.scale.multiplyScalar(1.15);
@@ -625,7 +599,6 @@ function createSpecialExplosion(pos) {
     });
 }
 
-// コンボ加算処理
 function addCombo(hits, damage) {
     comboHits += hits;
     comboDamage += damage;
@@ -642,43 +615,36 @@ function addCombo(hits, damage) {
     }, 2200);
 }
 
-// プレイヤー通常攻撃のトリガー
+// プレイヤー通常攻撃
 function performPlayerAttack() {
     if (!isGameActive) return;
     if (player.state === "special" || player.state === "guard" || player.state === "dodge" || player.state === "down") return;
 
-    // 次のコンボステップ
     player.comboStep = (player.comboStep % 3) + 1;
     player.state = "attack";
-    player.stateTimer = 0.35; // 攻撃持続
+    player.stateTimer = 0.32;
 
-    // 相手への距離・角度
     const toCpu = new THREE.Vector3().subVectors(cpu.position, player.position);
     const dist = toCpu.length();
 
-    // 攻撃モーション時に相手の方向を向く
     player.rotationY = Math.atan2(toCpu.x, toCpu.z);
+    player.velocity.copy(toCpu.normalize().multiplyScalar(4.8));
 
-    // 攻撃前進ステップ
-    player.velocity.copy(toCpu.normalize().multiplyScalar(4.0));
+    const slashColor = player.comboStep === 3 ? 0xff4757 : 0x00ffff;
+    createSlashEffect(player.position, cpu.position, slashColor, player.comboStep === 3 ? 1.55 : 1.05);
 
-    // スラッシュ演出
-    const slashColor = player.comboStep === 3 ? 0xff4757 : 0xffd32a;
-    createSlashEffect(player.position, cpu.position, slashColor, player.comboStep === 3 ? 1.5 : 1.0);
-
-    // ヒット判定
-    if (dist < 2.5) {
-        let baseDmg = player.comboStep === 1 ? 45 : (player.comboStep === 2 ? 65 : 120);
+    if (dist < 2.7) {
+        let baseDmg = player.comboStep === 1 ? 45 : (player.comboStep === 2 ? 65 : 125);
         let isCrit = player.comboStep === 3;
 
-        // CPUのガード判定
+        cameraShakeIntensity = isCrit ? 0.35 : 0.14;
+
         if (cpu.isGuarding) {
             baseDmg = Math.floor(baseDmg * 0.15);
             spawnDamageNumber(cpu.position.x, cpu.position.y, cpu.position.z, baseDmg, "guard");
         } else {
             spawnDamageNumber(cpu.position.x, cpu.position.y, cpu.position.z, baseDmg, isCrit ? "crit" : "normal");
-            // ノックバック
-            const knockForce = isCrit ? 8.0 : 3.0;
+            const knockForce = isCrit ? 8.5 : 3.2;
             cpu.velocity.add(toCpu.normalize().multiplyScalar(knockForce));
             cpu.state = isCrit ? "down" : "damaged";
             cpu.stateTimer = isCrit ? 0.7 : 0.3;
@@ -687,7 +653,6 @@ function performPlayerAttack() {
         applyDamage('cpu', baseDmg);
         addCombo(1, baseDmg);
 
-        // SPチャージ
         player.sp = Math.min(player.maxSp, player.sp + 10);
         updateGauges();
     }
@@ -706,10 +671,9 @@ function performPlayerSpecial() {
     updateGauges();
 
     player.state = "special";
-    player.stateTimer = 1.3;
+    player.stateTimer = 1.25;
     player.velocity.set(0, 0, 0);
 
-    // カットイン演出
     const cutin = document.getElementById('special-cutin');
     const cutinChar = document.getElementById('cutin-char');
     const cutinSkill = document.getElementById('cutin-skill');
@@ -717,31 +681,29 @@ function performPlayerSpecial() {
     cutinSkill.innerText = "🔥 覇皇烈空閃 (EX SPECIAL) 🔥";
     cutin.classList.add('active');
 
-    // 技発動
     setTimeout(() => {
         cutin.classList.remove('active');
 
-        // 相手に向かって超突進
         const toCpu = new THREE.Vector3().subVectors(cpu.position, player.position);
         player.rotationY = Math.atan2(toCpu.x, toCpu.z);
 
         createSpecialExplosion(cpu.position);
+        cameraShakeIntensity = 0.65;
 
         const dmg = 380;
         applyDamage('cpu', dmg);
         spawnDamageNumber(cpu.position.x, cpu.position.y, cpu.position.z, dmg, "crit");
         addCombo(5, dmg);
 
-        // CPUをアリーナ端まで吹き飛ばす
         cpu.velocity.add(toCpu.normalize().multiplyScalar(15.0));
         cpu.state = "down";
         cpu.stateTimer = 1.0;
 
         showAnnouncement("CRITICAL SPECIAL HIT! 💥", "#ffd32a");
-    }, 550);
+    }, 520);
 }
 
-// プレイヤー回避（ステップ）
+// プレイヤー回避
 function performPlayerDodge() {
     if (!isGameActive) return;
     if (player.sp < 15) return;
@@ -754,14 +716,13 @@ function performPlayerDodge() {
     player.stateTimer = 0.28;
     player.isInvincible = true;
 
-    // 入力方向、なければ後方
     let dir = new THREE.Vector3(input.moveX, 0, input.moveZ);
     if (dir.lengthSq() < 0.01) {
-        dir.set(0, 0, 1).applyAxisAngle(new THREE.Vector3(0, 1, 0), player.rotationY);
+        dir.set(0, 0, -1).applyAxisAngle(new THREE.Vector3(0, 1, 0), player.rotationY);
     } else {
         dir.normalize();
     }
-    player.velocity.copy(dir.multiplyScalar(12.0));
+    player.velocity.copy(dir.multiplyScalar(12.5));
 
     setTimeout(() => {
         player.isInvincible = false;
@@ -769,7 +730,7 @@ function performPlayerDodge() {
 }
 
 // ========================================================
-// 6. ダメージ & HP/SP ゲージ反映
+// 6. ダメージ & HP/SP ゲージ反映 (Unity版と同等の難易度スケーリング)
 // ========================================================
 function applyDamage(target, amount) {
     if (target === 'cpu') {
@@ -781,11 +742,12 @@ function applyDamage(target, amount) {
     } else {
         if (player.isInvincible) return;
 
-        let finalDmg = amount;
+        let finalDmg = Math.round(amount);
         if (player.isGuarding) {
             finalDmg = Math.floor(amount * 0.15);
             spawnDamageNumber(player.position.x, player.position.y, player.position.z, finalDmg, "guard");
         } else {
+            cameraShakeIntensity = 0.22;
             spawnDamageNumber(player.position.x, player.position.y, player.position.z, finalDmg, "normal");
             player.state = "damaged";
             player.stateTimer = 0.3;
@@ -802,7 +764,6 @@ function applyDamage(target, amount) {
 }
 
 function updateGauges() {
-    // プレイヤーHP & SP
     const playerHpPct = (player.hp / player.maxHp) * 100;
     const playerBar = document.getElementById('player-hp-bar');
     const playerDelay = document.getElementById('player-hp-delay');
@@ -815,7 +776,6 @@ function updateGauges() {
     if (playerSpBar) playerSpBar.style.width = `${playerSpPct}%`;
     document.getElementById('player-sp-text').innerText = `SP ${Math.floor(player.sp)} / ${player.maxSp}`;
 
-    // CPU HP & SP
     const cpuHpPct = (cpu.hp / cpu.maxHp) * 100;
     const cpuBar = document.getElementById('cpu-hp-bar');
     const cpuDelay = document.getElementById('cpu-hp-delay');
@@ -841,7 +801,6 @@ function showAnnouncement(text, color = "#ffd32a") {
     }, 1800);
 }
 
-// 勝利処理
 function handleVictory() {
     isGameActive = false;
     isKoSlowMo = true;
@@ -851,13 +810,17 @@ function handleVictory() {
     currentWins++;
     document.getElementById('current-wins').innerText = currentWins;
 
+    if (currentWins > highScore) {
+        highScore = currentWins;
+        localStorage.setItem("battle_high_score", highScore);
+        document.getElementById('high-score').innerText = highScore;
+    }
+
     setTimeout(() => {
-        // 次のCPUを生成
         spawnNextCpu();
     }, 2000);
 }
 
-// 敗北処理
 function handleGameOver() {
     isGameActive = false;
     player.state = "down";
@@ -886,16 +849,22 @@ function spawnNextCpu() {
         styleInfo: style
     };
 
+    // SurvivalGameManager と同等の段階的強化 (Scale Difficulty)
     cpu.styleInfo = style;
-    cpu.maxHp = 1000 + (currentWins * 200);
+    cpu.maxHp = Math.round(1000 * Math.pow(1.08, currentWins));
     cpu.hp = cpu.maxHp;
     cpu.sp = 30;
+    cpu.speed = Math.min(7.5, 4.8 + currentWins * 0.15);
     cpu.position.set(4.5, 0, 0);
     cpu.velocity.set(0, 0, 0);
     cpu.state = "idle";
 
-    // プレイヤー回復 (連勝ボーナス)
-    player.hp = Math.min(player.maxHp, player.hp + 400);
+    // プレイヤー体力引き継ぎ (PercentageBonusHeal: 35%ボーナス回復)
+    if (currentWins > 0) {
+        player.hp = Math.min(player.maxHp, Math.round(player.hp + player.maxHp * 0.35));
+    } else {
+        player.hp = player.maxHp;
+    }
     player.sp = Math.min(player.maxSp, player.sp + 30);
     player.position.set(-4.5, 0, 0);
     player.velocity.set(0, 0, 0);
@@ -904,7 +873,7 @@ function spawnNextCpu() {
     document.getElementById('cpu-name').innerText = currentCpuInfo.name;
     document.getElementById('cpu-type').innerText = `${currentCpuInfo.style}`;
 
-    setupCpuModel(style, currentWins + 1);
+    setupCpuModel(style);
     updateGauges();
     isGameActive = true;
     showAnnouncement(`ROUND ${currentWins + 1} - FIGHT!`, "#00d2d3");
@@ -924,14 +893,14 @@ function resetGame() {
 }
 
 function shareOnX() {
-    const text = `⚔️【3D自作キャラバトル】\n古代遺跡コロシアムの死闘を制し、🔥【 ${currentWins} 連勝 】🔥 を達成！\n\n#自作キャラバトル #アンリミテッドクルーズ #VRM #Threejs`;
+    const text = `⚔️【3D自作キャラバトル】\nBlender×Three.js 古代遺跡コロシアムの死闘を制し、🔥【 ${currentWins} 連勝 】🔥 を達成！\n\n#自作キャラバトル #アンリミテッドクルーズ #VRM #Blender #Unity6`;
     const gameUrl = window.location.href;
     const xUrl = `https://twitter.com/intent/tweet?text=${encodeURIComponent(text)}&url=${encodeURIComponent(gameUrl)}`;
     window.open(xUrl, '_blank');
 }
 
 // ========================================================
-// 7. CPU AI (アンリミ風バトルAI)
+// 7. CPU AI & Blenderモデルの関節アニメーション
 // ========================================================
 function updateCpuAI(dt) {
     if (!isGameActive || cpu.state === "down") return;
@@ -940,60 +909,51 @@ function updateCpuAI(dt) {
     const toPlayer = new THREE.Vector3().subVectors(player.position, cpu.position);
     const dist = toPlayer.length();
 
-    // プレイヤーの方向を向く
     cpu.rotationY = Math.atan2(toPlayer.x, toPlayer.z);
 
-    if (cpu.aiTimer <= 0) {
-        cpu.aiTimer = 0.4 + Math.random() * 0.4;
+    // 連勝数に応じてAIの反応速度と攻撃倍率が強化
+    const atkPowerScale = Math.pow(1.05, currentWins);
+    const intervalCooldown = Math.max(0.22, 0.55 - currentWins * 0.02);
 
-        // 必殺技判定 (SP50以上で一定確率)
-        if (cpu.sp >= 50 && dist < 5.0 && Math.random() < 0.35) {
+    if (cpu.aiTimer <= 0) {
+        cpu.aiTimer = intervalCooldown + Math.random() * 0.3;
+
+        if (cpu.sp >= 50 && dist < 5.2 && Math.random() < 0.38) {
             cpu.sp -= 50;
             cpu.state = "attack";
             cpu.stateTimer = 0.8;
             updateGauges();
             showAnnouncement("⚠️ CPU SPECIAL ATTACK! ⚠️", "#ff4757");
             createSpecialExplosion(player.position);
-            applyDamage('player', 260);
+            applyDamage('player', 240 * atkPowerScale);
             return;
         }
 
-        // 近接型
         if (cpu.styleInfo.category.includes("melee")) {
-            if (dist > 2.0) {
+            if (dist > 2.1) {
                 cpu.aiAction = "chase";
             } else {
-                // 近距離
                 const r = Math.random();
-                if (r < 0.6) {
-                    cpu.aiAction = "attack";
-                } else if (r < 0.85) {
-                    cpu.aiAction = "guard";
-                } else {
-                    cpu.aiAction = "circle";
-                }
+                if (r < 0.62) cpu.aiAction = "attack";
+                else if (r < 0.86) cpu.aiAction = "guard";
+                else cpu.aiAction = "circle";
             }
         } else {
-            // 狙撃型
-            if (dist < 3.5) {
-                cpu.aiAction = "retreat";
-            } else {
-                cpu.aiAction = "shoot";
-            }
+            if (dist < 3.5) cpu.aiAction = "retreat";
+            else cpu.aiAction = "shoot";
         }
     }
 
-    // 行動実行
     cpu.isGuarding = false;
     if (cpu.aiAction === "chase") {
         const moveDir = toPlayer.clone().normalize();
-        cpu.velocity.add(moveDir.multiplyScalar(cpu.speed * dt * 5.0));
+        cpu.velocity.add(moveDir.multiplyScalar(cpu.speed * dt * 5.2));
     } else if (cpu.aiAction === "attack" && cpu.state !== "attack") {
         cpu.state = "attack";
-        cpu.stateTimer = 0.4;
-        createSlashEffect(cpu.position, player.position, 0xff4757, 1.1);
-        if (dist < 2.3) {
-            applyDamage('player', 65);
+        cpu.stateTimer = 0.38;
+        createSlashEffect(cpu.position, player.position, 0xff4757, 1.2);
+        if (dist < 2.45) {
+            applyDamage('player', 60 * atkPowerScale);
             cpu.sp = Math.min(cpu.maxSp, cpu.sp + 12);
         }
     } else if (cpu.aiAction === "guard") {
@@ -1003,22 +963,48 @@ function updateCpuAI(dt) {
         cpu.velocity.add(moveDir.multiplyScalar(cpu.speed * dt * 6.0));
     } else if (cpu.aiAction === "shoot" && cpu.state !== "attack") {
         cpu.state = "attack";
-        cpu.stateTimer = 0.5;
-        // 狙撃弾
-        createSlashEffect(cpu.position, player.position, 0x8e44ad, 0.8);
-        if (dist < 8.0) {
-            applyDamage('player', 45);
+        cpu.stateTimer = 0.45;
+        createSlashEffect(cpu.position, player.position, 0x9b59b6, 0.9);
+        if (dist < 8.5) {
+            applyDamage('player', 45 * atkPowerScale);
         }
     }
 
-    // ガードバリア表示切替
     if (cpu.guardBarrierMesh) {
-        cpu.guardBarrierMesh.material.opacity = cpu.isGuarding ? 0.6 : 0.0;
+        cpu.guardBarrierMesh.material.opacity = cpu.isGuarding ? 0.55 : 0.0;
+    }
+}
+
+// Blender製ファイターの関節（腕・脚）のプロシージャルアニメーション
+function animateFighterJoints(entity, dt, isMoving) {
+    entity.animTime += dt * 11.0;
+    const j = entity.joints;
+    if (!j) return;
+
+    if (j.leftLeg && j.rightLeg) {
+        const legAngle = isMoving ? Math.sin(entity.animTime) * 0.55 : 0;
+        j.leftLeg.rotation.x = legAngle;
+        j.rightLeg.rotation.x = -legAngle;
+    }
+
+    if (j.leftArm && j.rightArm) {
+        if (entity.state === "attack" || entity.state === "special") {
+            const swing = Math.sin(entity.stateTimer * 22.0) * 1.35;
+            j.rightArm.rotation.x = -1.1 - swing;
+            j.leftArm.rotation.x = 0.4;
+        } else if (entity.isGuarding) {
+            j.leftArm.rotation.x = -0.9;
+            j.rightArm.rotation.x = -0.9;
+        } else {
+            const armAngle = isMoving ? -Math.sin(entity.animTime) * 0.4 : Math.sin(entity.animTime * 0.25) * 0.08;
+            j.leftArm.rotation.x = armAngle;
+            j.rightArm.rotation.x = -armAngle;
+        }
     }
 }
 
 // ========================================================
-// 8. メイン更新 & アニメーションループ
+// 8. メイン更新 & ポストプロセスレンダーループ
 // ========================================================
 function animate() {
     requestAnimationFrame(animate);
@@ -1026,40 +1012,42 @@ function animate() {
     let dt = clock.getDelta();
     if (isKoSlowMo) {
         slowMoTimer -= dt;
-        dt *= 0.25; // スローモーション
+        dt *= 0.25;
         if (slowMoTimer <= 0) isKoSlowMo = false;
     }
     const elapsedTime = clock.getElapsedTime();
 
     // 松明の炎のゆらぎ
     torchFlames.forEach((tf, i) => {
-        const flicker = Math.sin(elapsedTime * 8.0 + i) * 0.4;
-        tf.light.intensity = 2.4 + flicker;
-        tf.mesh.position.y = tf.baseY + Math.sin(elapsedTime * 6.0 + i) * 0.05;
+        const flicker = Math.sin(elapsedTime * 9.0 + i * 1.7) * 0.65;
+        tf.light.intensity = 4.2 + flicker;
+        tf.mesh.position.y = tf.baseY + Math.sin(elapsedTime * 7.0 + i) * 0.06;
+        tf.mesh.rotation.y += dt * 3.0;
     });
 
     // 海面のさざ波
     if (seaWaterMesh) {
-        seaWaterMesh.position.y = -8.0 + Math.sin(elapsedTime * 1.2) * 0.15;
+        seaWaterMesh.position.y = -8.0 + Math.sin(elapsedTime * 1.2) * 0.18;
     }
 
     // SP自然回復
     if (isGameActive) {
-        player.sp = Math.min(player.maxSp, player.sp + 3.0 * dt);
-        cpu.sp = Math.min(cpu.maxSp, cpu.sp + 2.5 * dt);
+        player.sp = Math.min(player.maxSp, player.sp + 3.2 * dt);
+        cpu.sp = Math.min(cpu.maxSp, cpu.sp + 2.6 * dt);
         updateGauges();
     }
 
     // --- プレイヤー操作・移動更新 ---
+    let playerMoving = false;
     if (isGameActive && player.state !== "special" && player.state !== "down") {
         player.isGuarding = input.guard;
         if (player.guardBarrierMesh) {
-            player.guardBarrierMesh.material.opacity = player.isGuarding ? 0.6 : 0.0;
+            player.guardBarrierMesh.material.opacity = player.isGuarding ? 0.55 : 0.0;
         }
 
         if (!player.isGuarding && (Math.abs(input.moveX) > 0.05 || Math.abs(input.moveZ) > 0.05)) {
             player.state = "move";
-            // カメラ基準の移動ベクトル
+            playerMoving = true;
             const camForward = new THREE.Vector3(0, 0, -1).applyAxisAngle(new THREE.Vector3(0, 1, 0), camera.rotation.y);
             const camRight = new THREE.Vector3(1, 0, 0).applyAxisAngle(new THREE.Vector3(0, 1, 0), camera.rotation.y);
 
@@ -1070,7 +1058,6 @@ function animate() {
 
             player.velocity.add(moveVec.multiplyScalar(player.speed * dt * 7.0));
 
-            // 移動方向を向く（ロックオン時はCPUを注視）
             if (input.lockOn) {
                 const toCpu = new THREE.Vector3().subVectors(cpu.position, player.position);
                 player.rotationY = Math.atan2(toCpu.x, toCpu.z);
@@ -1082,7 +1069,6 @@ function animate() {
         }
     }
 
-    // プレイヤー状態タイマー
     if (player.stateTimer > 0) {
         player.stateTimer -= dt;
         if (player.stateTimer <= 0) {
@@ -1091,56 +1077,60 @@ function animate() {
         }
     }
 
-    // CPU状態タイマー
     if (cpu.stateTimer > 0) {
         cpu.stateTimer -= dt;
         if (cpu.stateTimer <= 0) cpu.state = "idle";
     }
 
-    // CPU AI更新
     updateCpuAI(dt);
 
-    // 物理移動（摩擦・速度減衰）
+    // 物理移動
     player.position.addScaledVector(player.velocity, dt);
-    player.velocity.multiplyScalar(0.85);
+    player.velocity.multiplyScalar(0.84);
 
     cpu.position.addScaledVector(cpu.velocity, dt);
-    cpu.velocity.multiplyScalar(0.85);
+    cpu.velocity.multiplyScalar(0.84);
 
-    // アリーナ境界制限 (円形ステージの外に出ない)
-    const pDist = Math.sqrt(player.position.x ** 2 + player.position.z ** 2);
-    if (pDist > arenaRadius - 1.2) {
-        player.position.normalize().multiplyScalar(arenaRadius - 1.2);
+    // アリーナ境界制限
+    const pDist = Math.hypot(player.position.x, player.position.z);
+    if (pDist > arenaRadius - 0.8) {
+        player.position.multiplyScalar((arenaRadius - 0.8) / pDist);
     }
-    const cDist = Math.sqrt(cpu.position.x ** 2 + cpu.position.z ** 2);
-    if (cDist > arenaRadius - 1.2) {
-        cpu.position.normalize().multiplyScalar(arenaRadius - 1.2);
+    const cDist = Math.hypot(cpu.position.x, cpu.position.z);
+    if (cDist > arenaRadius - 0.8) {
+        cpu.position.multiplyScalar((arenaRadius - 0.8) / cDist);
     }
 
-    // 位置・回転適用
     player.group.position.copy(player.position);
-    player.group.rotation.y = player.rotationY;
+    // Blenderモデルは前方が -Y -> Three.js変換時に +Z を向くようオフセット調整
+    player.group.rotation.y = player.rotationY + (player.isVrm ? 0 : Math.PI);
 
     cpu.group.position.copy(cpu.position);
-    cpu.group.rotation.y = cpu.rotationY;
+    cpu.group.rotation.y = cpu.rotationY + Math.PI;
 
-    // VRMモデル更新
+    // 関節アニメーション更新
     if (player.vrm) {
         player.vrm.update(dt);
-        // 移動時の簡易歩行ボーンアニメーション
-        if (player.vrm.humanoid && player.state === "move") {
+        if (player.vrm.humanoid && playerMoving) {
             player.animTime += dt * 10;
             const lLeg = player.vrm.humanoid.getNormalizedBoneNode('leftUpperLeg');
             const rLeg = player.vrm.humanoid.getNormalizedBoneNode('rightUpperLeg');
             if (lLeg) lLeg.rotation.x = Math.sin(player.animTime) * 0.45;
             if (rLeg) rLeg.rotation.x = -Math.sin(player.animTime) * 0.45;
         }
+    } else {
+        animateFighterJoints(player, dt, playerMoving);
     }
 
-    // サイキッカーオーブ回転
+    const cpuMoving = cpu.velocity.lengthSq() > 0.2;
+    animateFighterJoints(cpu, dt, cpuMoving);
+
+    // サイキッカーのBlender念動オーブ回転
     cpu.orbs.forEach(item => {
-        const angle = elapsedTime * 2.5 + item.angleOffset;
-        item.mesh.position.set(Math.cos(angle) * 0.8, 1.2 + Math.sin(elapsedTime * 3.0) * 0.15, Math.sin(angle) * 0.8);
+        const angle = elapsedTime * 2.6 + item.angleOffset;
+        item.mesh.position.set(Math.cos(angle) * 0.95, 1.25 + Math.sin(elapsedTime * 3.2) * 0.15, Math.sin(angle) * 0.95);
+        item.mesh.rotation.y += dt * 2.5;
+        item.mesh.rotation.x += dt * 1.5;
     });
 
     // エフェクト更新
@@ -1154,18 +1144,28 @@ function animate() {
         }
     }
 
-    // --- TPSカメラ制御（アンリミテッドクルーズ風対戦アングル） ---
-    // プレイヤーの背後やや上方に構え、常にプレイヤーとCPUを画角に収める
+    // TPSカメラ制御 + ヒット時のカメラシェイク
     const midPoint = new THREE.Vector3().addVectors(player.position, cpu.position).multiplyScalar(0.5);
     const toMid = new THREE.Vector3().subVectors(player.position, midPoint).normalize();
     const camTargetPos = player.position.clone()
-        .addScaledVector(toMid, 4.0)
-        .add(new THREE.Vector3(0, 2.8, 0));
+        .addScaledVector(toMid, 4.2)
+        .add(new THREE.Vector3(0, 2.9, 0));
 
-    camera.position.lerp(camTargetPos, 0.08);
-    camera.lookAt(midPoint.x, 1.2, midPoint.z);
+    camera.position.lerp(camTargetPos, 0.09);
+    if (cameraShakeIntensity > 0.01) {
+        camera.position.x += (Math.random() - 0.5) * cameraShakeIntensity;
+        camera.position.y += (Math.random() - 0.5) * cameraShakeIntensity;
+        cameraShakeIntensity *= 0.85;
+    } else {
+        cameraShakeIntensity = 0;
+    }
+    camera.lookAt(midPoint.x, 1.15, midPoint.z);
 
-    renderer.render(scene, camera);
+    if (composer) {
+        composer.render();
+    } else {
+        renderer.render(scene, camera);
+    }
 }
 
 function onResize() {
@@ -1176,13 +1176,13 @@ function onResize() {
     camera.aspect = w / h;
     camera.updateProjectionMatrix();
     renderer.setSize(w, h);
+    if (composer) composer.setSize(w, h);
 }
 
 // ========================================================
-// 9. 入力イベントバインド (キーボード & タッチコントローラー)
+// 9. 入力イベントバインド
 // ========================================================
 function setupInputs() {
-    // キーボード
     window.addEventListener('keydown', e => {
         const k = e.key.toLowerCase();
         if (k === 'w' || k === 'arrowup') input.moveZ = 1;
@@ -1204,10 +1204,8 @@ function setupInputs() {
         if (k === ' ') input.guard = false;
     });
 
-    // スマホ用バーチャルスティック
     setupTouchJoystick();
 
-    // アクションボタン
     const bindBtn = (id, onDown, onUp) => {
         const el = document.getElementById(id);
         if (!el) return;
@@ -1222,7 +1220,6 @@ function setupInputs() {
     bindBtn('t-btn-dodge', performPlayerDodge);
     bindBtn('t-btn-guard', () => { input.guard = true; }, () => { input.guard = false; });
 
-    // リザルトボタン
     document.getElementById('btn-share-x').addEventListener('click', shareOnX);
     document.getElementById('btn-retry').addEventListener('click', resetGame);
 }
@@ -1265,7 +1262,7 @@ function setupTouchJoystick() {
         }
     });
 
-    const resetStick = e => {
+    const resetStick = () => {
         stick.style.transform = `translate(0px, 0px)`;
         input.moveX = 0;
         input.moveZ = 0;
@@ -1281,8 +1278,7 @@ function setupTouchJoystick() {
 // ========================================================
 document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('high-score').innerText = highScore;
-    initScene();
     setupInputs();
     setupVrmLoader();
-    spawnNextCpu();
+    initScene();
 });
