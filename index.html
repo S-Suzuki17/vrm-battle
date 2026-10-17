@@ -65,19 +65,23 @@
                 </div>
             </div>
 
-            <!-- 中央上部：ラウンドタイマー ＆ 連勝数 ＆ AUTO/観戦スイッチ -->
+            <!-- 中央上部：ラウンドタイマー ＆ 連勝数 ＆ SCORE ＆ 再生リスト全機能スイッチ -->
             <div class="hud-center">
                 <div class="round-timer-box">
                     <div class="timer-digits" id="round-timer-val">99</div>
                 </div>
                 <div class="round-sub-label">
                     ROUND <span id="round-num-val">1</span>
-                    （🔥<strong id="current-wins" style="color:#ffd32a;">0</strong>連勝中 / BEST:<span id="high-score">0</span>）
+                    ｜ 🔥<strong id="current-wins" style="color:#ffd32a;">0</strong>連勝 (BEST:<span id="high-score">0</span>)
+                    ｜ 🏆SCORE: <strong id="score-val" style="color:#00f2fe;">0</strong>
                 </div>
                 <div class="director-bar">
-                    <button class="dir-btn active" id="btn-auto-toggle" title="自作AIによる街中自動バトルON/OFF (Pキー)">🤖 AUTO街バトル: ON</button>
-                    <button class="dir-btn" id="btn-cinematic-mode" title="UIを消して都市バトルを鑑賞">🎬 都市観戦カメラ</button>
-                    <button class="dir-btn" id="btn-open-graph-loop" title="グラフエンジニアリング＆ループエンジニアリング稼働状況">🕸️ グラフ＆ループ</button>
+                    <button class="dir-btn active" id="btn-auto-toggle" title="自作AIによる実寸大都市オートバトルON/OFF (Pキー)">🤖 AUTO街バトル: ON</button>
+                    <button class="dir-btn active" id="btn-lockon-toggle" title="敵ロックオン＆3DターゲットリングON/OFF (#16 Qキー)">🎯 ロックオン: ON</button>
+                    <button class="dir-btn active" id="btn-sound-toggle" title="剣撃SE・ダメージ音・爆発音・都市BGMのON/OFF (#7)">🔊 効果音/BGM: ON</button>
+                    <button class="dir-btn" id="btn-cinematic-mode" title="UIを消して都市バトルを鑑賞">🎬 観戦カメラ</button>
+                    <button class="dir-btn" id="btn-open-graph-loop" title="グラフ＆ループ＋再生リスト全19回実装状況">🕸️ グラフ＆全19講</button>
+                    <button class="dir-btn" id="btn-export-build" title="キャラ＆トークン＆AIデータをJSON書き出し (#18)">📦 書き出し</button>
                     <button class="dir-btn brag-btn" id="btn-live-brag" title="現在の連勝記録と挑戦状URLをXに投稿">🐦 生存報告</button>
                 </div>
             </div>
@@ -90,7 +94,7 @@
                         <span class="unit-name" id="cpu-name">Ghost Fighter</span>
                     </div>
                     <!-- ゴースト情報 -->
-                    <div class="char-style-tag" id="cpu-type">👻 非同期防衛ゴースト (渋谷スクランブル街区)</div>
+                    <div class="char-style-tag" id="cpu-type">👻 非同期防衛ゴースト (実寸大・渋谷スクランブル街区)</div>
                     <!-- CPU 斜めHPバー -->
                     <div class="skew-bar-row cpu-skew-row">
                         <div class="gauge-frame hp-frame skew-box cpu-skew">
@@ -140,13 +144,31 @@
         <!-- 浮動ダメージ数値コンテナ -->
         <div id="damage-numbers-layer"></div>
 
+        <!-- 再生リスト#8/#9/#11/#16：3Dワールド空間追従・敵頭上HPバー＆索敵/徘徊/追尾バッジ -->
+        <div id="enemy-world-hud" class="enemy-world-hud">
+            <div class="ew-ai-state" id="ew-ai-state">🚶 街中をウロウロ索敵中 (PATROL)</div>
+            <div class="ew-hp-track">
+                <div class="ew-hp-fill" id="ew-hp-fill"></div>
+            </div>
+            <div class="ew-poise-track">
+                <div class="ew-poise-fill" id="ew-poise-fill"></div>
+            </div>
+        </div>
+
+        <!-- 実寸大1:1スケール (160m×160m) 渋谷都市街区レーダーミニマップ -->
+        <div class="city-minimap-wrap" id="city-minimap-wrap" title="実寸大1:1スケール(160m×160m) 渋谷街区レーダー：青=自分 / 赤=敵(黄円=索敵範囲) / 緑=街頭破壊オブジェ">
+            <div class="minimap-header">🗺️ 実寸大 渋谷街区 (160m×160m)</div>
+            <canvas id="city-minimap-canvas" width="148" height="148"></canvas>
+            <div class="minimap-sub" id="minimap-coords">距離: 0.0m | 破壊物: 16個</div>
+        </div>
+
         <!-- ========================================================
              左下メニューガイド ＆ オリキャラ工房ボタン（出撃中は変更不可ロック！）
              ======================================================== -->
         <div class="left-info-menu" id="left-info-menu">
-            <div class="info-menu-item"><span class="key-pill">CITY</span> 舞台: 東京・渋谷スクランブル交差点＆高層ビル街 (Cycles)</div>
+            <div class="info-menu-item"><span class="key-pill">1:1 CITY</span> 実寸大・渋谷スクランブル街区 (160m×160m / ビル当たり判定＆街頭破壊対応)</div>
             <div class="info-menu-item" id="registered-status-line">
-                <span class="key-pill">LOCK</span> 状態: <strong id="registered-char-label">出撃前（クリエイト可能）</strong>
+                <span class="key-pill">STATE</span> 状態: <strong id="registered-char-label">出撃前（クリエイト可能）</strong> ｜ <span id="animator-state-pill" style="color:#00f2fe;font-weight:800;">Anim: Idle</span>
             </div>
             <div class="info-menu-actions">
                 <button class="studio-open-btn" id="open-creator-btn">🎨 オリキャラ・コンボ＆トークン工房</button>

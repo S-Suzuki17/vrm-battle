@@ -141,6 +141,7 @@ const cyclesImages = {
 // 2. ゲーム全体ステート ＆ プレイヤー設定（1人1体制限・負けるまでロック）
 // ========================================================
 let currentWins = 0;
+let currentScore = 0; // プレイリスト#15: リアルタイムSCORE表示
 let highScore = Number(localStorage.getItem("battle_high_score") || 0);
 let roundTimer = 99;
 let roundTimerAccum = 0;
@@ -158,15 +159,19 @@ const battleStats = {
     stunsInflicted: 0,
     maxCombo: 0,
     skillsUsed: 0,
+    propsDestroyed: 0,
     totalBattles: Number(localStorage.getItem("city_total_battles") || 1),
     lastEnemyMove: "豪腕クラッシュ"
 };
 
-// Three.js シーン＆ポストプロセス管理
+// Three.js シーン＆ポストプロセス管理（1 unit = 1 meter 実寸大 160m×160m 渋谷都市区画）
 let scene, camera, renderer, composer, bloomPass, clock;
 let toonGradientMap = null;
 let cyclesEnvMap = null;
-let arenaRadius = 12.5; // 渋谷スクランブル交差点・都市フィールド半径
+let arenaRadius = 75.0; // 実寸大 渋谷スクランブル交差点＆大通り都市フィールド半径 (直径150m / 160m×160m街区)
+let cityBuildingsColliderList = []; // 実寸大高層ビルのAABBコリジョン配列 (#2 障害物コライダー)
+let cityStreetProps = [];           // 街中の破壊可能オブジェクト配列 (#4 生成と削除 & The暴DX)
+let lockOnReticleMesh = null;       // プレイリスト#16: 3Dターゲットロックオンリング
 let effectsList = [];
 let projectilesList = [];
 let playerAuraParticles = [];
@@ -177,6 +182,127 @@ let hitStopTimer = 0;
 let isKoSlowMo = false;
 let slowMoTimer = 0;
 let cinematicCameraMode = null;
+let studioSyncSlidersFn = null;
+
+// ========================================================
+// 2.5 プレイリスト#7「効果音で世界を彩る」Web Audio API シンセサイザーSE＆都市BGMエンジン
+// ========================================================
+const SoundEngine = {
+    ctx: null,
+    enabled: true,
+    bgmTimer: null,
+    bgmStep: 0,
+    init() {
+        if (!this.ctx) {
+            const AudioCtx = window.AudioContext || window.webkitAudioContext;
+            if (AudioCtx) this.ctx = new AudioCtx();
+        }
+        if (this.ctx && this.ctx.state === 'suspended') {
+            this.ctx.resume();
+        }
+        if (this.enabled && !this.bgmTimer) {
+            this.startBgmLoop();
+        }
+    },
+    play(type) {
+        if (!this.enabled) return;
+        try {
+            this.init();
+            if (!this.ctx) return;
+            const now = this.ctx.currentTime;
+            const osc = this.ctx.createOscillator();
+            const gain = this.ctx.createGain();
+            osc.connect(gain);
+            gain.connect(this.ctx.destination);
+
+            if (type === 'slash') {
+                osc.type = 'triangle';
+                osc.frequency.setValueAtTime(520, now);
+                osc.frequency.exponentialRampToValueAtTime(140, now + 0.11);
+                gain.gain.setValueAtTime(0.14, now);
+                gain.gain.exponentialRampToValueAtTime(0.001, now + 0.12);
+                osc.start(now);
+                osc.stop(now + 0.12);
+            } else if (type === 'hit') {
+                osc.type = 'sawtooth';
+                osc.frequency.setValueAtTime(190, now);
+                osc.frequency.exponentialRampToValueAtTime(55, now + 0.14);
+                gain.gain.setValueAtTime(0.20, now);
+                gain.gain.exponentialRampToValueAtTime(0.001, now + 0.15);
+                osc.start(now);
+                osc.stop(now + 0.15);
+            } else if (type === 'explode') {
+                osc.type = 'square';
+                osc.frequency.setValueAtTime(120, now);
+                osc.frequency.exponentialRampToValueAtTime(32, now + 0.32);
+                gain.gain.setValueAtTime(0.24, now);
+                gain.gain.exponentialRampToValueAtTime(0.001, now + 0.34);
+                osc.start(now);
+                osc.stop(now + 0.34);
+            } else if (type === 'alert') {
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(660, now);
+                osc.frequency.setValueAtTime(880, now + 0.07);
+                gain.gain.setValueAtTime(0.16, now);
+                gain.gain.exponentialRampToValueAtTime(0.001, now + 0.22);
+                osc.start(now);
+                osc.stop(now + 0.22);
+            } else if (type === 'lockon') {
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(980, now);
+                osc.frequency.setValueAtTime(1320, now + 0.05);
+                gain.gain.setValueAtTime(0.12, now);
+                gain.gain.exponentialRampToValueAtTime(0.001, now + 0.14);
+                osc.start(now);
+                osc.stop(now + 0.14);
+            } else if (type === 'ko') {
+                osc.type = 'sawtooth';
+                osc.frequency.setValueAtTime(440, now);
+                osc.frequency.exponentialRampToValueAtTime(88, now + 0.55);
+                gain.gain.setValueAtTime(0.25, now);
+                gain.gain.exponentialRampToValueAtTime(0.001, now + 0.58);
+                osc.start(now);
+                osc.stop(now + 0.58);
+            }
+        } catch (e) {
+            // AudioContext autoplay restriction fallback
+        }
+    },
+    startBgmLoop() {
+        if (this.bgmTimer) clearInterval(this.bgmTimer);
+        const notes = [110, 130.81, 146.83, 164.81, 146.83, 130.81, 98.0, 110];
+        this.bgmTimer = setInterval(() => {
+            if (!this.enabled || !this.ctx || this.ctx.state !== 'running' || !isGameActive) return;
+            const now = this.ctx.currentTime;
+            const osc = this.ctx.createOscillator();
+            const gain = this.ctx.createGain();
+            osc.type = 'triangle';
+            const freq = notes[this.bgmStep % notes.length];
+            this.bgmStep++;
+            osc.frequency.setValueAtTime(freq, now);
+            gain.gain.setValueAtTime(0.035, now);
+            gain.gain.exponentialRampToValueAtTime(0.001, now + 0.22);
+            osc.connect(gain);
+            gain.connect(this.ctx.destination);
+            osc.start(now);
+            osc.stop(now + 0.23);
+        }, 260);
+    },
+    toggle() {
+        this.enabled = !this.enabled;
+        if (this.enabled) {
+            this.init();
+            this.play('lockon');
+        }
+        return this.enabled;
+    }
+};
+
+function addScore(points) {
+    currentScore += Math.round(points);
+    const el = document.getElementById('score-val');
+    if (el) el.innerText = currentScore.toLocaleString();
+}
 
 // プレイヤー管理オブジェクト（キャラデザ・コンボ・必殺技・5種トークン配分・AIガンビット統合）
 const player = {
@@ -247,7 +373,7 @@ const player = {
     maxHp: 1360,
     sp: 60,
     maxSp: 100,
-    position: new THREE.Vector3(-4.2, 0, 1.0),
+    position: new THREE.Vector3(-6.0, 0, 2.0),
     airY: 0,
     airVelY: 0,
     rotationY: Math.PI * 0.45,
@@ -263,7 +389,7 @@ const player = {
     animTime: 0
 };
 
-// CPU管理オブジェクト（ひるみ・体幹ゲージ・打ち上げ・非同期ゴースト対応）
+// CPU管理オブジェクト（#8 追尾 ＆ #11 ウロウロ索敵パトロール ＆ ひるみ・体幹ゲージ・非同期ゴースト対応）
 const cpu = {
     group: null,
     animPivot: null,
@@ -279,12 +405,12 @@ const cpu = {
     poise: 110,           // 体幹値（0になると大ひるみブレイク）
     maxPoise: 110,
     stunTimer: 0,         // ひるみ（Hit-Stun）残り時間
-    position: new THREE.Vector3(3.8, 0, -0.8),
+    position: new THREE.Vector3(16.0, 0, -12.0),
     airY: 0,              // 打ち上げ高度
     airVelY: 0,
     rotationY: -Math.PI * 0.55,
     velocity: new THREE.Vector3(),
-    speed: 4.6,
+    speed: 5.4,
     state: "idle",        // idle, move, attack, special, guard, stunned, launched, down
     stateTimer: 0,
     stateDuration: 0.4,
@@ -293,6 +419,11 @@ const cpu = {
     guardBarrierMesh: null,
     aiTimer: 0,
     aiAction: "idle",
+    aiMode: "patrol",     // "patrol" (#11 敵をウロウロさせる) | "chase" (#8 敵に追尾させる) | "combat"
+    patrolTarget: new THREE.Vector3(18, 0, 0),
+    patrolTimer: 0,
+    detectionRange: 26.0, // 実寸大都市での索敵範囲 26m
+    alerted: false,
     animTime: 0
 };
 
@@ -377,7 +508,7 @@ function preloadCyclesAssets() {
 }
 
 // ========================================================
-// 4. Three.js シーン初期化 ＆ Blender Cycles 東京・渋谷3D都市バトルフィールド構築
+// 4. Three.js シーン初期化 ＆ 実寸大 (1 unit = 1m / 160m×160m) 東京・渋谷3D都市フィールド構築
 // ========================================================
 async function initScene() {
     preloadCyclesAssets();
@@ -389,10 +520,11 @@ async function initScene() {
 
     scene = new THREE.Scene();
     scene.background = new THREE.Color(0x162238);
-    scene.fog = new THREE.FogExp2(0x1a2842, 0.0052);
+    // 実寸大 (160m×160m街区＋120m東京タワー) でも遠景の摩天楼が美しく見えるフォグ密度
+    scene.fog = new THREE.FogExp2(0x1a2842, 0.0021);
 
-    camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 360);
-    camera.position.set(-6.5, 3.6, 7.2);
+    camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 680);
+    camera.position.set(-10.5, 4.2, 11.2);
 
     renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
     renderer.setSize(width, height);
@@ -403,7 +535,7 @@ async function initScene() {
     renderer.toneMappingExposure = 1.22;
     container.appendChild(renderer.domElement);
 
-    // ポストプロセス（UnrealBloomPass によるネオン看板・街灯・斬撃エフェクトの輝き強調）
+    // プレイリスト#17: ポストプロセス（UnrealBloomPass によるネオン看板・街灯・斬撃エフェクトの輝き強調）
     composer = new EffectComposer(renderer);
     const renderPass = new RenderPass(scene, camera);
     composer.addPass(renderPass);
@@ -419,18 +551,18 @@ async function initScene() {
     clock = new THREE.Clock();
 
     // 夕暮れ〜トワイライトの東京都市ライティング ＋ ネオンリムライト
-    const hemiLight = new THREE.HemisphereLight(0x9ec5fe, 0x2b3648, 1.45);
-    hemiLight.position.set(0, 42, 0);
+    const hemiLight = new THREE.HemisphereLight(0x9ec5fe, 0x2b3648, 1.48);
+    hemiLight.position.set(0, 95, 0);
     scene.add(hemiLight);
 
     const sunLight = new THREE.DirectionalLight(0xffe5b4, 2.55);
-    sunLight.position.set(18, 30, 20);
+    sunLight.position.set(55, 88, 60);
     sunLight.castShadow = true;
     sunLight.shadow.mapSize.width = 2048;
     sunLight.shadow.mapSize.height = 2048;
-    sunLight.shadow.camera.near = 1;
-    sunLight.shadow.camera.far = 85;
-    const d = 18;
+    sunLight.shadow.camera.near = 2;
+    sunLight.shadow.camera.far = 260;
+    const d = 75;
     sunLight.shadow.camera.left = -d;
     sunLight.shadow.camera.right = d;
     sunLight.shadow.camera.top = d;
@@ -440,14 +572,14 @@ async function initScene() {
 
     // 都会のネオン反射を演出するシアン＆マゼンタピンクのバックリムライト
     const rimLightCyan = new THREE.DirectionalLight(0x00f2fe, 1.05);
-    rimLightCyan.position.set(-20, 14, -18);
+    rimLightCyan.position.set(-65, 38, -55);
     scene.add(rimLightCyan);
 
     const rimLightNeon = new THREE.DirectionalLight(0xff2a85, 0.85);
-    rimLightNeon.position.set(20, 12, -16);
+    rimLightNeon.position.set(65, 34, -50);
     scene.add(rimLightNeon);
 
-    // Blender 5.2 Cycles 東京・渋谷スクランブル交差点＆高層ビル街フィールド構築
+    // 実寸大 (1 unit = 1 meter / 160m×160m街区) 東京・渋谷スクランブル交差点＆高層ビル街フィールド構築
     createDaylightAnimeColosseum();
 
     // プレイヤー＆CPU生成
@@ -461,95 +593,150 @@ async function initScene() {
 }
 
 /**
- * YouTube参考 (`https://youtu.be/uk404c43pRY` [Blender] 街をひと手間でそれっぽく作る)
- * Blender 5.2 Cycles テクスチャ ＋ プロシージャル高層ビル群・ネオン看板・渋谷109風タワー・東京タワー・信号機・街灯
+ * 1:1 実寸大 (1 unit = 1 meter, キャラクター身長 約1.65m基準) 東京・渋谷160m×160m都市区画
+ * - プレイリスト #2 (`フィールドを用意してキャラを動かす`), #4 (`時間差でオブジェクトを生成と削除`), #13 (`地形をデザインする`), #16 (`敵をロックオン`), `The暴DX` 統合
+ * - 中央 32m×32m 渋谷スクランブル交差点 ＋ 幅24mの4車線大通り（南北・東西 160m）＋ 斜めセンター街通り
+ * - 28棟の実寸大高層ビル群（高さ38m〜95m・幅16m〜24m、AABB壁面コライダー付きで通りのみ移動可能）
+ * - 高さ52m「SHIBUYA 109」シリンダータワー、高さ120m「東京タワー」、高さ8.5m街灯、高さ6.2m信号機、街中破壊オブジェクト16基
  */
 function createDaylightAnimeColosseum() {
     const envGroup = new THREE.Group();
     const texLoader = new THREE.TextureLoader();
+    cityBuildingsColliderList = [];
 
-    // 0. Blender 5.2 Cycles 360° 東京トワイライト＆摩天楼環境マップ読み込み
+    // 0. Blender 5.2 Cycles 360° 東京トワイライト＆摩天楼環境マップ読み込み (半径420mスカイドーム)
     texLoader.load('./assets/renders/cycles_city_sky.png', skyTex => {
         skyTex.mapping = THREE.EquirectangularReflectionMapping;
         skyTex.colorSpace = THREE.SRGBColorSpace;
         cyclesEnvMap = skyTex;
         scene.environment = skyTex;
 
-        const skyDomeGeo = new THREE.SphereGeometry(220, 48, 32);
+        const skyDomeGeo = new THREE.SphereGeometry(420, 48, 32);
         const skyDomeMat = new THREE.MeshBasicMaterial({
             map: skyTex,
             side: THREE.BackSide,
             fog: false
         });
         const skyDome = new THREE.Mesh(skyDomeGeo, skyDomeMat);
-        skyDome.position.y = -6.0;
+        skyDome.position.y = -12.0;
         envGroup.add(skyDome);
     });
 
-    // 1. 渋谷スクランブル交差点（5方向横断歩道＆濡れたアスファルト反射路面）
-    const groundCanvas = document.createElement('canvas');
-    groundCanvas.width = 512;
-    groundCanvas.height = 512;
-    const gctx = groundCanvas.getContext('2d');
-    gctx.fillStyle = '#1c222d';
-    gctx.fillRect(0, 0, 512, 512);
-    gctx.fillStyle = '#e2e8f0';
-    for (let i = 0; i < 10; i++) {
-        gctx.fillRect(90 + i * 34, 60, 18, 80);
-        gctx.fillRect(90 + i * 34, 372, 18, 80);
-        gctx.fillRect(60, 90 + i * 34, 80, 18);
-        gctx.fillRect(372, 90 + i * 34, 80, 18);
-    }
-    const fallbackGroundTex = new THREE.CanvasTexture(groundCanvas);
-
-    const floorMat = new THREE.MeshStandardMaterial({
-        map: fallbackGroundTex,
-        roughness: 0.24, // 濡れたアスファルトの路面反射
-        metalness: 0.32,
-        envMapIntensity: 1.55
-    });
-
-    // Blender 5.2 Cycles でレンダリングした渋谷スクランブル交差点アスファルトテクスチャを適用
-    texLoader.load('./assets/renders/cycles_city_ground.png', cyclesGroundTex => {
-        cyclesGroundTex.colorSpace = THREE.SRGBColorSpace;
-        cyclesGroundTex.anisotropy = 8;
-        floorMat.map = cyclesGroundTex;
-        floorMat.needsUpdate = true;
-    });
-
-    const floorMesh = new THREE.Mesh(new THREE.CylinderGeometry(arenaRadius + 2.5, arenaRadius + 3.0, 1.2, 64), floorMat);
-    floorMesh.position.y = -0.6;
-    floorMesh.receiveShadow = true;
-    envGroup.add(floorMesh);
-
-    // 広域都市アスファルト基盤（遠景ビル街の地面）
+    // 1. 広域都市コンクリート＆歩道基盤 (380m × 380m)
     const outerCityGround = new THREE.Mesh(
-        new THREE.PlaneGeometry(280, 280),
-        new THREE.MeshStandardMaterial({ color: 0x12161f, roughness: 0.35, metalness: 0.25 })
+        new THREE.PlaneGeometry(380, 380),
+        new THREE.MeshStandardMaterial({ color: 0x222938, roughness: 0.55, metalness: 0.18 })
     );
     outerCityGround.rotation.x = -Math.PI / 2;
-    outerCityGround.position.y = -0.05;
+    outerCityGround.position.y = -0.02;
     outerCityGround.receiveShadow = true;
     envGroup.add(outerCityGround);
 
-    // スクランブル交差点バトルエリアのネオン境界リング
+    // 2. 実寸大 幅24m×長さ160m 大通り（南北大通り・東西大通り・斜めセンター街）＆ 中央32m×32mスクランブル交差点
+    const roadCanvas = document.createElement('canvas');
+    roadCanvas.width = 1024;
+    roadCanvas.height = 1024;
+    const rctx = roadCanvas.getContext('2d');
+    rctx.fillStyle = '#171c26';
+    rctx.fillRect(0, 0, 1024, 1024);
+
+    // 車線ライン（中央オレンジ線＆白破線）
+    rctx.fillStyle = '#f59e0b';
+    rctx.fillRect(506, 0, 12, 1024);
+    rctx.fillRect(0, 506, 1024, 12);
+    rctx.fillStyle = '#cbd5e1';
+    for (let i = 0; i < 32; i++) {
+        rctx.fillRect(256, i * 32 + 6, 8, 18);
+        rctx.fillRect(760, i * 32 + 6, 8, 18);
+        rctx.fillRect(i * 32 + 6, 256, 18, 8);
+        rctx.fillRect(i * 32 + 6, 760, 18, 8);
+    }
+    // スクランブル交差点の横断歩道ゼブラ（4方向＋斜め横断歩道）
+    rctx.fillStyle = '#f1f5f9';
+    for (let i = 0; i < 12; i++) {
+        const offset = 330 + i * 30;
+        rctx.fillRect(offset, 260, 18, 65);
+        rctx.fillRect(offset, 700, 18, 65);
+        rctx.fillRect(260, offset, 65, 18);
+        rctx.fillRect(700, offset, 65, 18);
+    }
+    const roadTex = new THREE.CanvasTexture(roadCanvas);
+    roadTex.colorSpace = THREE.SRGBColorSpace;
+
+    const avenueMat = new THREE.MeshStandardMaterial({
+        color: 0x181e29,
+        roughness: 0.26,
+        metalness: 0.30,
+        envMapIntensity: 1.45
+    });
+
+    // 南北大通り (幅24m × 長さ160m)
+    const nsAvenue = new THREE.Mesh(new THREE.PlaneGeometry(24, 160), avenueMat);
+    nsAvenue.rotation.x = -Math.PI / 2;
+    nsAvenue.position.y = 0.01;
+    nsAvenue.receiveShadow = true;
+    envGroup.add(nsAvenue);
+
+    // 東西大通り (長さ160m × 幅24m)
+    const ewAvenue = new THREE.Mesh(new THREE.PlaneGeometry(160, 24), avenueMat);
+    ewAvenue.rotation.x = -Math.PI / 2;
+    ewAvenue.position.y = 0.012;
+    ewAvenue.receiveShadow = true;
+    envGroup.add(ewAvenue);
+
+    // 渋谷センター街 斜めストリート (幅16m × 長さ150m)
+    const diagAvenue = new THREE.Mesh(new THREE.PlaneGeometry(16, 150), avenueMat);
+    diagAvenue.rotation.x = -Math.PI / 2;
+    diagAvenue.rotation.z = Math.PI / 4;
+    diagAvenue.position.y = 0.008;
+    diagAvenue.receiveShadow = true;
+    envGroup.add(diagAvenue);
+
+    // 中央 36m×36m 渋谷スクランブル交差点（Blender 5.2 Cycles アスファルトテクスチャ適用）
+    const scrambleMat = new THREE.MeshStandardMaterial({
+        map: roadTex,
+        roughness: 0.22,
+        metalness: 0.35,
+        envMapIntensity: 1.6
+    });
+    texLoader.load('./assets/renders/cycles_city_ground.png', cyclesGroundTex => {
+        cyclesGroundTex.colorSpace = THREE.SRGBColorSpace;
+        cyclesGroundTex.anisotropy = 8;
+        scrambleMat.map = cyclesGroundTex;
+        scrambleMat.needsUpdate = true;
+    });
+    const scramblePlaza = new THREE.Mesh(new THREE.PlaneGeometry(36, 36), scrambleMat);
+    scramblePlaza.rotation.x = -Math.PI / 2;
+    scramblePlaza.position.y = 0.02;
+    scramblePlaza.receiveShadow = true;
+    envGroup.add(scramblePlaza);
+
+    // 大通り沿いの実寸大横断歩道ストライプ（北・南・東・西・遠方交差点）
+    const stripeMat = new THREE.MeshBasicMaterial({ color: 0xe2e8f0 });
+    [-55, -20, 20, 55].forEach(pos => {
+        for (let s = -9; s <= 9; s += 2.2) {
+            const zStripe = new THREE.Mesh(new THREE.PlaneGeometry(1.1, 4.2), stripeMat);
+            zStripe.rotation.x = -Math.PI / 2;
+            zStripe.position.set(s, 0.025, pos);
+            envGroup.add(zStripe);
+
+            const xStripe = new THREE.Mesh(new THREE.PlaneGeometry(4.2, 1.1), stripeMat);
+            xStripe.rotation.x = -Math.PI / 2;
+            xStripe.position.set(pos, 0.025, s);
+            envGroup.add(xStripe);
+        }
+    });
+
+    // 実寸大フィールド外周境界リング (半径75m = 直径150m)
     const glowRing = new THREE.Mesh(
-        new THREE.RingGeometry(arenaRadius - 0.14, arenaRadius + 0.12, 64),
+        new THREE.RingGeometry(arenaRadius - 0.35, arenaRadius + 0.35, 96),
         new THREE.MeshBasicMaterial({ color: 0x00f2fe, side: THREE.DoubleSide, transparent: true, opacity: 0.85 })
     );
     glowRing.rotation.x = -Math.PI / 2;
-    glowRing.position.y = 0.03;
+    glowRing.position.y = 0.04;
     envGroup.add(glowRing);
 
-    // 外周の歩道縁石ブロック（Sidewalk Curb Ring）
-    const sidewalkMat = createToonMaterial(0x3a4354, 0x000000, 0, 0.15, 0.65);
-    const sidewalkRing = new THREE.Mesh(new THREE.RingGeometry(arenaRadius + 0.12, arenaRadius + 4.8, 64), sidewalkMat);
-    sidewalkRing.rotation.x = -Math.PI / 2;
-    sidewalkRing.position.y = 0.02;
-    sidewalkRing.receiveShadow = true;
-    envGroup.add(sidewalkRing);
-
-    // 2. ビル窓発光テクスチャ（ひと手間でビル群をリアルにするプロシージャル窓グリッド）
+    // 3. ビル窓発光テクスチャ（プロシージャル高層ビル窓グリッド）
     function createBuildingWindowTexture(accentColorHex) {
         const c = document.createElement('canvas');
         c.width = 256;
@@ -558,19 +745,19 @@ function createDaylightAnimeColosseum() {
         ctx.fillStyle = '#141a26';
         ctx.fillRect(0, 0, 256, 512);
 
-        const cols = 8;
-        const rows = 20;
-        const padX = 6, padY = 5;
+        const cols = 10;
+        const rows = 26;
+        const padX = 5, padY = 4;
         const w = (256 - padX * (cols + 1)) / cols;
         const h = (512 - padY * (rows + 1)) / rows;
 
         for (let r = 0; r < rows; r++) {
-            const floorLitChance = 0.25 + (Math.sin(r * 1.7) * 0.5 + 0.5) * 0.55;
+            const floorLitChance = 0.28 + (Math.sin(r * 1.7) * 0.5 + 0.5) * 0.55;
             for (let col = 0; col < cols; col++) {
                 const rand = Math.random();
                 if (rand < floorLitChance) {
-                    if (rand < 0.12) ctx.fillStyle = accentColorHex;
-                    else if (rand < 0.45) ctx.fillStyle = '#ffe8a3';
+                    if (rand < 0.14) ctx.fillStyle = accentColorHex;
+                    else if (rand < 0.48) ctx.fillStyle = '#ffe8a3';
                     else ctx.fillStyle = '#d8f3ff';
                 } else {
                     ctx.fillStyle = '#1e2738';
@@ -587,53 +774,74 @@ function createDaylightAnimeColosseum() {
     const winTexPink = createBuildingWindowTexture('#ff2a85');
     const winTexGold = createBuildingWindowTexture('#ffdd59');
 
-    // 3. 正面奥の象徴的ランドマーク：「SHIBUYA 109」風シリンダータワー＆大型街頭ビジョン
+    // 4. 実寸大ランドマーク①：「SHIBUYA 109」シリンダータワー（北西角・高さ52m・大型街頭ビジョン）
     const tower109Group = new THREE.Group();
-    tower109Group.position.set(0, 0, -21.5);
+    tower109Group.position.set(-24.0, 0, -26.0);
 
     const podiumMat = new THREE.MeshStandardMaterial({ map: winTexPink, roughness: 0.35, metalness: 0.4 });
-    const podium = createOutlinedPart(new THREE.BoxGeometry(10.5, 16.0, 7.5), podiumMat, 0.012);
-    podium.position.set(0, 8.0, 1.2);
+    const podium = createOutlinedPart(new THREE.BoxGeometry(20.0, 34.0, 16.0), podiumMat, 0.008);
+    podium.position.set(0, 17.0, 0);
     tower109Group.add(podium);
 
     const cylMat = new THREE.MeshStandardMaterial({ color: 0xc8d6e5, roughness: 0.2, metalness: 0.75 });
-    const cylTower = createOutlinedPart(new THREE.CylinderGeometry(2.8, 2.8, 25.0, 24), cylMat, 0.012);
-    cylTower.position.set(0, 12.5, 4.2);
+    const cylTower = createOutlinedPart(new THREE.CylinderGeometry(6.2, 6.2, 52.0, 28), cylMat, 0.008);
+    cylTower.position.set(5.5, 26.0, 5.5);
     tower109Group.add(cylTower);
 
-    // 109風ネオンピンク＆シアンのクラウンリング
+    // 109クラウンネオンリング
     const crownRing1 = new THREE.Mesh(
-        new THREE.CylinderGeometry(2.9, 2.9, 1.4, 24),
+        new THREE.CylinderGeometry(6.4, 6.4, 3.2, 28),
         new THREE.MeshBasicMaterial({ color: 0xff2a85 })
     );
-    crownRing1.position.set(0, 21.5, 4.2);
+    crownRing1.position.set(5.5, 46.5, 5.5);
     tower109Group.add(crownRing1);
 
-    // 大型街頭LEDビジョン画面
+    // 大型街頭LEDビジョン画面 (14m × 8.5m)
     const visionMat = new THREE.MeshBasicMaterial({ color: 0x00f2fe });
-    const visionScreen = new THREE.Mesh(new THREE.PlaneGeometry(6.8, 4.2), visionMat);
-    visionScreen.position.set(0, 10.5, 5.05);
+    const visionScreen = new THREE.Mesh(new THREE.PlaneGeometry(14.0, 8.5), visionMat);
+    visionScreen.position.set(0, 21.0, 8.15);
     tower109Group.add(visionScreen);
 
     envGroup.add(tower109Group);
+    // SHIBUYA 109 の実寸大壁面コライダー登録
+    cityBuildingsColliderList.push({ x: -24.0, z: -26.0, hw: 11.2, hd: 9.5, name: "SHIBUYA 109" });
 
-    // 4. 周囲を取り囲む16棟の高層ビル群 ＋ 発光ネオン看板 ＋ 屋上赤色航空障害灯
+    // 5. 4つの街区に立ち並ぶ実寸大 28棟の高層ビル群（高さ38m〜95m・幅16m〜24m）＋ AABB壁面コライダー
     const neonColors = [0xff2a85, 0x00f2fe, 0xffbe0b, 0x7bed9f, 0xa29bfe];
+    // [x, z, width(m), height(m), depth(m)] — 幅24mの大通り(x: -12〜12, z: -12〜12)を避けて4街区に配置
     const buildingSpecs = [
-        [-15.5, -16.5, 6.2, 26.0, 6.2],
-        [-21.0, -8.5,  6.5, 31.0, 6.5],
-        [-21.5,  2.0,  6.0, 22.0, 6.0],
-        [-17.5,  11.5, 5.8, 19.0, 5.8],
-        [-10.5, -19.5, 5.5, 24.0, 5.5],
-        [ 10.5, -19.5, 5.8, 25.0, 5.8],
-        [ 16.5, -15.5, 6.5, 29.0, 6.5],
-        [ 21.5, -6.5,  6.2, 33.0, 6.2],
-        [ 21.0,  4.0,  5.8, 21.0, 5.8],
-        [ 16.5,  12.5, 6.0, 18.0, 6.0],
-        [-28.0, -22.0, 8.0, 42.0, 8.0],
-        [ 28.0, -24.0, 8.5, 45.0, 8.5],
-        [-12.0,  19.0, 6.5, 20.0, 6.5],
-        [ 12.0,  19.0, 6.5, 22.0, 6.5]
+        // 北東ブロック (Q1: x > 14, z < -14)
+        [ 24.0, -24.0, 16.0, 54.0, 16.0],
+        [ 44.0, -24.0, 18.0, 68.0, 16.0],
+        [ 64.0, -24.0, 16.0, 48.0, 16.0],
+        [ 24.0, -44.0, 16.0, 62.0, 18.0],
+        [ 46.0, -46.0, 20.0, 86.0, 20.0],
+        [ 24.0, -64.0, 16.0, 52.0, 16.0],
+        [ 50.0, -68.0, 22.0, 92.0, 20.0],
+        // 北西ブロック (Q2: x < -14, z < -14, 109の周囲)
+        [-46.0, -24.0, 18.0, 58.0, 16.0],
+        [-66.0, -24.0, 16.0, 46.0, 16.0],
+        [-24.0, -48.0, 16.0, 64.0, 18.0],
+        [-46.0, -48.0, 20.0, 78.0, 20.0],
+        [-68.0, -48.0, 18.0, 55.0, 18.0],
+        [-26.0, -68.0, 18.0, 72.0, 16.0],
+        [-50.0, -70.0, 22.0, 88.0, 20.0],
+        // 南西ブロック (Q3: x < -14, z > 14)
+        [-24.0,  24.0, 16.0, 48.0, 16.0],
+        [-44.0,  24.0, 18.0, 64.0, 16.0],
+        [-64.0,  24.0, 16.0, 44.0, 16.0],
+        [-24.0,  44.0, 16.0, 58.0, 18.0],
+        [-46.0,  46.0, 20.0, 82.0, 20.0],
+        [-24.0,  64.0, 16.0, 50.0, 16.0],
+        [-48.0,  66.0, 20.0, 74.0, 18.0],
+        // 南東ブロック (Q4: x > 14, z > 14)
+        [ 24.0,  24.0, 16.0, 52.0, 16.0],
+        [ 44.0,  24.0, 18.0, 66.0, 16.0],
+        [ 64.0,  24.0, 16.0, 45.0, 16.0],
+        [ 24.0,  44.0, 16.0, 60.0, 18.0],
+        [ 46.0,  46.0, 22.0, 95.0, 22.0],
+        [ 24.0,  64.0, 16.0, 48.0, 16.0],
+        [ 48.0,  66.0, 20.0, 76.0, 18.0]
     ];
 
     const beaconMat = new THREE.MeshBasicMaterial({ color: 0xff3838 });
@@ -644,108 +852,130 @@ function createDaylightAnimeColosseum() {
             roughness: 0.32,
             metalness: 0.45,
             emissive: new THREE.Color(0x1a2639),
-            emissiveIntensity: 0.35
+            emissiveIntensity: 0.38
         });
-        const bldg = createOutlinedPart(new THREE.BoxGeometry(bw, bh, bd), bMat, 0.01);
+        const bldg = createOutlinedPart(new THREE.BoxGeometry(bw, bh, bd), bMat, 0.006);
         bldg.position.set(bx, bh / 2, bz);
-        bldg.lookAt(0, bh / 2, 0);
         envGroup.add(bldg);
 
-        // ビル側面の縦型ネオン看板（渋谷・新宿の繁華街らしさを演出）
+        // プレイリスト#2: ビル壁面のAABB障害物コライダーを登録（キャラがビル内部にめり込まず通りを移動する）
+        cityBuildingsColliderList.push({
+            x: bx,
+            z: bz,
+            hw: bw * 0.5 + 0.75,
+            hd: bd * 0.5 + 0.75,
+            name: `Tower-${idx + 1}`
+        });
+
+        // ビル側面の縦型大型ネオン看板（実寸大 高さ12m〜24m）
         const neonCol = neonColors[idx % neonColors.length];
         const signMat = new THREE.MeshBasicMaterial({ color: neonCol });
-        const signMesh = new THREE.Mesh(new THREE.BoxGeometry(0.85, bh * 0.42, 0.25), signMat);
-        const toCenter = new THREE.Vector3(-bx, 0, -bz).normalize();
+        const signMesh = new THREE.Mesh(new THREE.BoxGeometry(1.6, Math.min(22.0, bh * 0.38), 0.5), signMat);
+        const faceDirX = bx > 0 ? -1 : 1;
         signMesh.position.set(
-            bx + toCenter.x * (bw * 0.52),
-            bh * 0.55,
-            bz + toCenter.z * (bd * 0.52)
+            bx + faceDirX * (bw * 0.5 + 0.35),
+            bh * 0.48,
+            bz
         );
-        signMesh.lookAt(0, bh * 0.55, 0);
         envGroup.add(signMesh);
 
-        // 屋上の赤色航空障害灯（夜景・夕景のリアリティ向上）
-        const beacon = new THREE.Mesh(new THREE.SphereGeometry(0.24, 8, 8), beaconMat);
-        beacon.position.set(bx, bh + 0.35, bz);
+        // 屋上の赤色航空障害灯
+        const beacon = new THREE.Mesh(new THREE.SphereGeometry(0.45, 8, 8), beaconMat);
+        beacon.position.set(bx, bh + 0.5, bz);
         envGroup.add(beacon);
     });
 
-    // 5. 遠景ランドマーク：東京タワー風電波塔（左奥）
+    // 6. 実寸大ランドマーク②：高さ120m「東京タワー」電波塔（北西奥）
     const towerGroup = new THREE.Group();
-    towerGroup.position.set(-22.0, 0, -34.0);
+    towerGroup.position.set(-72.0, 0, -96.0);
     const redMat = new THREE.MeshBasicMaterial({ color: 0xff3838 });
     const whiteMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
     for (let seg = 0; seg < 6; seg++) {
-        const rTop = 0.35 + (5 - seg) * 0.48;
-        const rBot = 0.35 + (6 - seg) * 0.48;
+        const rTop = 1.2 + (5 - seg) * 1.45;
+        const rBot = 1.2 + (6 - seg) * 1.45;
         const segMesh = new THREE.Mesh(
-            new THREE.CylinderGeometry(rTop, rBot, 6.5, 8),
+            new THREE.CylinderGeometry(rTop, rBot, 16.5, 8),
             seg % 2 === 0 ? redMat : whiteMat
         );
-        segMesh.position.y = seg * 6.5 + 3.25;
+        segMesh.position.y = seg * 16.5 + 8.25;
         towerGroup.add(segMesh);
     }
-    const spire = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.35, 8.0, 8), redMat);
-    spire.position.y = 43.0;
+    const spire = new THREE.Mesh(new THREE.CylinderGeometry(0.25, 1.1, 22.0, 8), redMat);
+    spire.position.y = 110.0;
     towerGroup.add(spire);
     envGroup.add(towerGroup);
 
-    // 6. 街角の信号機・街灯・ガードレール・街路樹（ケヤキ並木）
+    // 7. 大通り沿いの実寸大街灯 (高さ8.5m)・信号機 (高さ6.2m)・ガードレール・街路樹 (高さ7.5mケヤキ並木)
     const poleMat = createToonMaterial(0x4b5563, 0x000000, 0, 0.6, 0.35);
-    const railCount = 24;
-    for (let i = 0; i < railCount; i++) {
-        const ang = (i / railCount) * Math.PI * 2;
-        if (ang > Math.PI * 0.25 && ang < Math.PI * 0.75) continue;
+    const trunkMat = createToonMaterial(0x5c4033, 0x000000, 0, 0.1, 0.8);
+    const leafMat = createToonMaterial(0x2ecc71, 0x0b3b1e, 0.15, 0.05, 0.65);
 
-        const rx = Math.cos(ang) * (arenaRadius + 0.45);
-        const rz = Math.sin(ang) * (arenaRadius + 0.45);
-
-        // 都市型ガードレール支柱＆白銀ビーム
-        const post = createOutlinedPart(new THREE.CylinderGeometry(0.08, 0.08, 0.95, 8), poleMat, 0.015);
-        post.position.set(rx, 0.48, rz);
-        envGroup.add(post);
-
-        const guardBeam = createOutlinedPart(new THREE.BoxGeometry(0.08, 0.22, 2.2), createToonMaterial(0xe2e8f0), 0.015);
-        guardBeam.position.set(rx, 0.72, rz);
-        guardBeam.rotation.y = -ang;
-        envGroup.add(guardBeam);
-
-        // 3本おきにモダンな街灯＆信号機を設置
-        if (i % 3 === 0) {
-            const lampX = Math.cos(ang) * (arenaRadius + 1.4);
-            const lampZ = Math.sin(ang) * (arenaRadius + 1.4);
-            const lampPole = new THREE.Mesh(new THREE.CylinderGeometry(0.10, 0.14, 5.2, 10), poleMat);
-            lampPole.position.set(lampX, 2.6, lampZ);
+    const avenueOffsets = [-62, -46, -30, -16, 16, 30, 46, 62];
+    avenueOffsets.forEach((coord, idx) => {
+        [-12.6, 12.6].forEach(side => {
+            // 南北大通り沿いの実寸大街灯 (高さ8.5m)
+            const lampPole = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.20, 8.5, 10), poleMat);
+            lampPole.position.set(side, 4.25, coord);
             envGroup.add(lampPole);
 
             const bulb = new THREE.Mesh(
-                new THREE.SphereGeometry(0.28, 12, 12),
-                new THREE.MeshBasicMaterial({ color: i % 6 === 0 ? 0x00f2fe : 0xffeaa7 })
+                new THREE.SphereGeometry(0.42, 12, 12),
+                new THREE.MeshBasicMaterial({ color: idx % 2 === 0 ? 0x00f2fe : 0xffeaa7 })
             );
-            bulb.position.set(lampX, 5.3, lampZ);
+            bulb.position.set(side, 8.6, coord);
             envGroup.add(bulb);
-        }
-    }
 
-    // 街路樹（都会のケヤキ並木 6本）
-    const trunkMat = createToonMaterial(0x5c4033, 0x000000, 0, 0.1, 0.8);
-    const leafMat = createToonMaterial(0x2ecc71, 0x0b3b1e, 0.15, 0.05, 0.65);
-    const treeAngles = [-2.6, -2.1, -1.0, -0.5, 0.3, 2.8];
-    treeAngles.forEach(ang => {
-        const tx = Math.cos(ang) * (arenaRadius + 2.6);
-        const tz = Math.sin(ang) * (arenaRadius + 2.6);
-        const trunk = createOutlinedPart(new THREE.CylinderGeometry(0.22, 0.32, 2.8, 8), trunkMat, 0.015);
-        trunk.position.set(tx, 1.4, tz);
-        envGroup.add(trunk);
+            // 東西大通り沿いの街路樹（実寸大 高さ7.5m ケヤキ並木）
+            if (Math.abs(coord) >= 28) {
+                const trunk = createOutlinedPart(new THREE.CylinderGeometry(0.32, 0.46, 4.2, 8), trunkMat, 0.012);
+                trunk.position.set(coord, 2.1, side);
+                envGroup.add(trunk);
 
-        const canopy = createOutlinedPart(new THREE.DodecahedronGeometry(1.45, 1), leafMat, 0.015);
-        canopy.position.set(tx, 3.3, tz);
-        envGroup.add(canopy);
+                const canopy = createOutlinedPart(new THREE.DodecahedronGeometry(2.6, 1), leafMat, 0.01);
+                canopy.position.set(coord, 5.6, side);
+                envGroup.add(canopy);
+            }
+        });
     });
 
-    // 7. 都会の空を舞うネオンホログラム粒子（36個）
-    const moteGeo = new THREE.OctahedronGeometry(0.06, 0);
-    for (let i = 0; i < 36; i++) {
+    // スクランブル交差点4隅の実寸大信号機 (高さ6.2m + 3色LED)
+    [[-13.5, -13.5], [13.5, -13.5], [-13.5, 13.5], [13.5, 13.5]].forEach(([sx, sz]) => {
+        const sigPole = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.20, 6.2, 10), poleMat);
+        sigPole.position.set(sx, 3.1, sz);
+        envGroup.add(sigPole);
+
+        const sigBox = new THREE.Mesh(new THREE.BoxGeometry(1.8, 0.55, 0.55), poleMat);
+        sigBox.position.set(sx * 0.88, 5.8, sz);
+        envGroup.add(sigBox);
+
+        const greenLight = new THREE.Mesh(new THREE.SphereGeometry(0.18, 8, 8), new THREE.MeshBasicMaterial({ color: 0x00f2fe }));
+        greenLight.position.set(sx * 0.85, 5.8, sz + (sz > 0 ? -0.3 : 0.3));
+        envGroup.add(greenLight);
+    });
+
+    // 8. プレイリスト#4「時間差でオブジェクトを生成と削除」＆ The暴DX：街中の破壊可能ストリートプロップ 16基
+    spawnCityStreetProps(envGroup);
+
+    // 9. プレイリスト#16「敵をロックオン」：3Dターゲットロックオン・デュアルレティクルリング生成
+    const reticleGroup = new THREE.Group();
+    const outerRetGeo = new THREE.RingGeometry(1.05, 1.22, 32);
+    const outerRetMat = new THREE.MeshBasicMaterial({ color: 0x00f2fe, side: THREE.DoubleSide, transparent: true, opacity: 0.88 });
+    const outerRet = new THREE.Mesh(outerRetGeo, outerRetMat);
+    outerRet.rotation.x = -Math.PI / 2;
+
+    const innerRetGeo = new THREE.RingGeometry(0.58, 0.68, 4);
+    const innerRetMat = new THREE.MeshBasicMaterial({ color: 0xffd32a, side: THREE.DoubleSide, transparent: true, opacity: 0.92 });
+    const innerRet = new THREE.Mesh(innerRetGeo, innerRetMat);
+    innerRet.rotation.x = -Math.PI / 2;
+
+    reticleGroup.add(outerRet, innerRet);
+    reticleGroup.position.y = 0.08;
+    scene.add(reticleGroup);
+    lockOnReticleMesh = reticleGroup;
+
+    // 10. 都会の空を舞うネオンホログラム粒子（60個・広域都市スケール）
+    const moteGeo = new THREE.OctahedronGeometry(0.10, 0);
+    for (let i = 0; i < 60; i++) {
         const mMat = new THREE.MeshBasicMaterial({
             color: i % 3 === 0 ? 0x00f2fe : (i % 3 === 1 ? 0xff2a85 : 0xffe66d),
             transparent: true,
@@ -753,8 +983,8 @@ function createDaylightAnimeColosseum() {
         });
         const mote = new THREE.Mesh(moteGeo, mMat);
         const ang = Math.random() * Math.PI * 2;
-        const rad = 1.5 + Math.random() * (arenaRadius - 0.8);
-        const y = 0.4 + Math.random() * 4.2;
+        const rad = 4.0 + Math.random() * (arenaRadius - 5.0);
+        const y = 0.8 + Math.random() * 8.5;
         mote.position.set(Math.cos(ang) * rad, y, Math.sin(ang) * rad);
         envGroup.add(mote);
         ambientSparkles.push({
@@ -762,12 +992,126 @@ function createDaylightAnimeColosseum() {
             baseY: y,
             angle: ang,
             radius: rad,
-            speed: 0.22 + Math.random() * 0.38,
+            speed: 0.14 + Math.random() * 0.25,
             phase: Math.random() * Math.PI * 2
         });
     }
 
     scene.add(envGroup);
+}
+
+/**
+ * プレイリスト#4「時間差でオブジェクトを生成と削除」＆ The暴DX：
+ * 渋谷の大通り沿いに配置される16基の破壊可能ストリートオブジェクト（サイバー自販機・ネオン立て看板・バリケード）
+ * 攻撃で吹き飛ばすと +250 SCORE ＆ SP +12% 獲得し、12秒後に自動リスポーン！
+ */
+function spawnCityStreetProps(parentGroup) {
+    cityStreetProps = [];
+    const propCoords = [
+        [-10.5, -18.0, "vending"], [ 10.5, -18.0, "neon_sign"],
+        [-10.5, -34.0, "barricade"], [ 10.5, -34.0, "vending"],
+        [-10.5,  18.0, "neon_sign"], [ 10.5,  18.0, "vending"],
+        [-10.5,  34.0, "vending"], [ 10.5,  34.0, "barricade"],
+        [-18.0, -10.5, "vending"], [-34.0,  10.5, "neon_sign"],
+        [ 18.0, -10.5, "neon_sign"], [ 34.0,  10.5, "vending"],
+        [-22.0, -22.0, "barricade"], [ 22.0,  22.0, "neon_sign"],
+        [-48.0,   0.0, "barricade"], [ 48.0,   0.0, "barricade"]
+    ];
+
+    propCoords.forEach(([px, pz, type], idx) => {
+        const g = new THREE.Group();
+        g.position.set(px, 0, pz);
+
+        if (type === "vending") {
+            // 実寸大 2.0m サイバー自動販売機
+            const body = createOutlinedPart(
+                new THREE.BoxGeometry(1.15, 2.05, 0.85),
+                createToonMaterial(idx % 2 === 0 ? 0x0984e3 : 0xe84393, 0x00f2fe, 0.25),
+                0.015
+            );
+            body.position.y = 1.025;
+            const panel = new THREE.Mesh(
+                new THREE.PlaneGeometry(0.88, 1.15),
+                new THREE.MeshBasicMaterial({ color: 0xffeaa7 })
+            );
+            panel.position.set(0, 1.25, 0.44);
+            g.add(body, panel);
+        } else if (type === "neon_sign") {
+            // 実寸大 1.8m ネオンストリート看板
+            const frame = createOutlinedPart(
+                new THREE.BoxGeometry(0.95, 1.75, 0.35),
+                createToonMaterial(0x1e272e, 0xff2a85, 0.55),
+                0.015
+            );
+            frame.position.y = 0.95;
+            g.add(frame);
+        } else {
+            // 実寸大 ストリートバリケード
+            const bar = createOutlinedPart(
+                new THREE.BoxGeometry(2.1, 1.05, 0.55),
+                createToonMaterial(0xfbc531, 0x000000, 0),
+                0.015
+            );
+            bar.position.y = 0.55;
+            g.add(bar);
+        }
+
+        parentGroup.add(g);
+        cityStreetProps.push({
+            mesh: g,
+            x: px,
+            z: pz,
+            type,
+            alive: true,
+            respawnTimer: 0
+        });
+    });
+}
+
+/**
+ * プレイリスト#2「障害物コライダー」：実寸大高層ビル（AABB）との衝突押し戻し判定
+ */
+function resolveCityBuildingCollisions(entity) {
+    const px = entity.position.x;
+    const pz = entity.position.z;
+    for (let i = 0; i < cityBuildingsColliderList.length; i++) {
+        const b = cityBuildingsColliderList[i];
+        const dx = px - b.x;
+        const dz = pz - b.z;
+        if (Math.abs(dx) < b.hw && Math.abs(dz) < b.hd) {
+            const overlapX = b.hw - Math.abs(dx);
+            const overlapZ = b.hd - Math.abs(dz);
+            if (overlapX < overlapZ) {
+                entity.position.x += dx >= 0 ? overlapX : -overlapX;
+            } else {
+                entity.position.z += dz >= 0 ? overlapZ : -overlapZ;
+            }
+        }
+    }
+}
+
+/**
+ * プレイリスト#4 ＆ The暴DX：攻撃時の街中オブジェクト（自販機・看板・バリケード）破壊判定
+ */
+function checkStreetPropHits(attackerPos, reach) {
+    for (let i = 0; i < cityStreetProps.length; i++) {
+        const prop = cityStreetProps[i];
+        if (!prop.alive) continue;
+        const d = Math.hypot(attackerPos.x - prop.x, attackerPos.z - prop.z);
+        if (d <= reach + 1.2) {
+            prop.alive = false;
+            prop.respawnTimer = 12.0; // 12秒後に再生成 (#4 時間差でオブジェクトを生成と削除)
+            prop.mesh.visible = false;
+            battleStats.propsDestroyed++;
+            SoundEngine.play('explode');
+            addScore(250);
+            player.sp = Math.min(player.maxSp, player.sp + 12);
+            const propPos = new THREE.Vector3(prop.x, 0.5, prop.z);
+            spawnHitSparks(propPos, 0x00f2fe, 36);
+            spawnGroundSlamVFX(propPos, 0xffdd59, 1.15);
+            spawnDamageNumber(prop.x, 1.2, prop.z, "+250 PTS", "crit", "💥街破壊!");
+        }
+    }
 }
 
 // ========================================================
@@ -2186,6 +2530,7 @@ function performPlayerAttack(subType = "rush") {
     player.attackSubType = subType;
     player.comboStep = (player.comboStep % 3) + 1;
     player.state = "attack";
+    SoundEngine.play('slash'); // プレイリスト#7: 剣撃スイング効果音
 
     // コンボ段数に応じたユーザー選択技を取得
     const route = player.comboRoute || { starter: 'flash_step', linker: 'spiral_slash', finisher: 'sky_upper' };
@@ -2204,10 +2549,15 @@ function performPlayerAttack(subType = "rush") {
 
     const toCpu = new THREE.Vector3().subVectors(cpu.position, player.position);
     const dist = toCpu.length();
-    player.rotationY = Math.atan2(toCpu.x, toCpu.z);
+    if (input.lockOn) {
+        player.rotationY = Math.atan2(toCpu.x, toCpu.z);
+    }
 
+    const lungeDir = input.lockOn
+        ? toCpu.clone().normalize()
+        : new THREE.Vector3(Math.sin(player.rotationY), 0, Math.cos(player.rotationY));
     const lunge = moveSpec.lunge * (subType === "launch" ? 1.1 : 1.0);
-    player.velocity.copy(toCpu.clone().normalize().multiplyScalar(lunge));
+    player.velocity.copy(lungeDir.multiplyScalar(lunge));
     spawnFootstepDust(player.position, 1.5);
 
     const pal = getVfxPalette();
@@ -2220,7 +2570,11 @@ function performPlayerAttack(subType = "rush") {
     spawnCrescentSlash(player.position, cpu.position, player.comboStep === 3 ? pal.sub : pal.main, player.comboStep, rangeRatio);
 
     const effectiveRange = player.attackRange * moveSpec.rangeMult * (subType === "wide" ? 1.12 : 1.0);
+    // プレイリスト#4 ＆ The暴DX：街中の自販機・ネオン看板・バリケードの破壊判定
+    checkStreetPropHits(player.position, effectiveRange);
+
     if (dist <= effectiveRange) {
+        SoundEngine.play('hit'); // プレイリスト#7: ヒット打撃効果音
         const rawDmg = (subType === "launch" ? 86 : (subType === "wide" ? 66 : 50)) * moveSpec.dmgMult;
         const isFinisher = player.comboStep === 3 || subType === "launch";
         const archMult = getArchetypeMultiplier(player.archetype, cpu.archetype);
@@ -2249,6 +2603,7 @@ function performPlayerAttack(subType = "rush") {
                 cpu.velocity.add(toCpu.clone().normalize().multiplyScalar(3.6));
                 spawnGroundSlamVFX(cpu.position, pal.sub, 1.15);
                 spawnDamageNumber(cpu.position.x, cpu.position.y + cpu.airY, cpu.position.z, finalDmg, "crit", `${moveSpec.label}!`);
+                addScore(finalDmg * 2);
             } else {
                 cpu.state = "stunned";
                 cpu.stateDuration = stunDuration;
@@ -2258,6 +2613,7 @@ function performPlayerAttack(subType = "rush") {
                 }
                 cpu.velocity.add(toCpu.clone().normalize().multiplyScalar(2.4));
                 spawnDamageNumber(cpu.position.x, cpu.position.y + cpu.airY, cpu.position.z, finalDmg, "stun", moveSpec.label);
+                addScore(finalDmg);
             }
 
             cameraShakeIntensity = isFinisher ? 0.38 : 0.16;
@@ -2307,6 +2663,7 @@ function performSkillArts() {
     player.state = "skill";
     player.stateDuration = 0.62 / player.atkSpeed;
     player.stateTimer = player.stateDuration;
+    SoundEngine.play('slash');
 
     const toCpu = new THREE.Vector3().subVectors(cpu.position, player.position);
     const dist = toCpu.length();
@@ -2316,6 +2673,7 @@ function performSkillArts() {
     const pal = getVfxPalette();
     spawnGroundSlamVFX(player.position, pal.main, 1.2);
     spawnCrescentSlash(player.position, cpu.position, pal.main, 2, (player.attackRange / 3.1) * 1.35);
+    checkStreetPropHits(player.position, player.attackRange * 1.5);
 
     const archMult = getArchetypeMultiplier(player.archetype, cpu.archetype);
     const overdriveMult = player.overdriveTimer > 0 ? 1.28 : 1.0;
@@ -2323,6 +2681,7 @@ function performSkillArts() {
         for (let i = 0; i < 3; i++) {
             setTimeout(() => {
                 if (!isGameActive) return;
+                SoundEngine.play('hit');
                 const hitDmg = Math.round(54 * player.atkScale * overdriveMult * archMult);
                 cpu.state = "stunned";
                 cpu.stunTimer = 0.65 * player.stunPower;
@@ -2333,6 +2692,7 @@ function performSkillArts() {
                 spawnDamageNumber(cpu.position.x, cpu.position.y + cpu.airY, cpu.position.z, hitDmg, "crit", "SKILL!");
                 applyDamage('cpu', hitDmg);
                 addCombo(1, hitDmg);
+                addScore(hitDmg * 2);
                 cameraShakeIntensity = 0.28;
             }, i * 110);
         }
@@ -2360,6 +2720,7 @@ function performPlayerSpecial() {
     player.stateTimer = 1.25;
     player.isInvincible = true;
     player.velocity.set(0, 0, 0);
+    SoundEngine.play('explode');
 
     const toCpu = new THREE.Vector3().subVectors(cpu.position, player.position);
     player.rotationY = Math.atan2(toCpu.x, toCpu.z);
@@ -2385,9 +2746,11 @@ function performPlayerSpecial() {
     setTimeout(() => {
         cutin.classList.remove('active');
         cinematicCameraMode = "action_wide";
+        SoundEngine.play('explode');
 
         spawnGroundSlamVFX(cpu.position, pal.main, 2.3);
         spawnGroundSlamVFX(cpu.position, pal.sub, 1.7);
+        checkStreetPropHits(cpu.position, 8.0);
 
         // 固有特殊能力②: 完全装甲破壊 (敵ガード無効化＆体幹0＋2秒スタン)
         if (ultTrait === "guard_shatter") {
@@ -2407,6 +2770,7 @@ function performPlayerSpecial() {
         for (let i = 0; i < hitCount; i++) {
             setTimeout(() => {
                 if (!isGameActive) return;
+                SoundEngine.play('hit');
                 const partDmg = Math.round(basePerHit * player.atkScale * tokenUltBonus * archMult * executeMult);
                 totalDealt += partDmg;
                 spawnHitSparks(cpu.position, i % 2 === 0 ? pal.main : pal.sub, 45);
@@ -2414,6 +2778,7 @@ function performPlayerSpecial() {
                 spawnDamageNumber(cpu.position.x, cpu.position.y + cpu.airY, cpu.position.z, partDmg, "crit", prefix);
                 applyDamage('cpu', partDmg);
                 addCombo(1, partDmg);
+                addScore(partDmg * 3);
 
                 // 固有特殊能力①: 吸血ドレイン (最終段ヒット時に総ダメージの35%HP回復)
                 if (i === hitCount - 1 && ultTrait === "vampire_heal" && player.hp > 0) {
@@ -2496,6 +2861,7 @@ function applyDamage(target, amount) {
             spawnHitSparks(player.position, 0x00f2fe, 20);
             spawnDamageNumber(player.position.x, player.position.y, player.position.z, finalDmg, "guard", "GUARD");
         } else {
+            SoundEngine.play('hit');
             cameraShakeIntensity = 0.30;
             spawnHitSparks(player.position, 0xff3838, 35);
             spawnDamageNumber(player.position.x, player.position.y, player.position.z, finalDmg, "normal");
@@ -2546,6 +2912,8 @@ function handleVictory() {
     isGameActive = false;
     isKoSlowMo = true;
     slowMoTimer = 1.25;
+    SoundEngine.play('ko');
+    addScore(1500 + currentWins * 500 + roundTimer * 25);
     spawnGroundSlamVFX(cpu.position, 0xffd32a, 2.0);
     showAnnouncement("K.O. !! 🏆 ROUND CLEAR!", "#ffd32a");
 
@@ -2582,6 +2950,7 @@ function handleGameOver() {
     player.state = "down";
     player.stateDuration = 2.0;
     player.stateTimer = 2.0;
+    SoundEngine.play('ko');
     showAnnouncement("DEFEATED... 💀 名誉の引退", "#ff4757");
 
     if (currentWins > highScore) {
@@ -2594,7 +2963,7 @@ function handleGameOver() {
     unlockCharacterOnDefeat();
 
     const boss = cpu.bossInfo || CPU_BOSS_TYPES[0];
-    const epitaph = `【引退】「${player.design.name}」、強敵「${boss.name}」の前に散る。通算 ${currentWins} 連勝。我が戦いに悔いなし！`;
+    const epitaph = `【引退】「${player.design.name}」、強敵「${boss.name}」の前に散る。通算 ${currentWins} 連勝 (SCORE: ${currentScore.toLocaleString()})。我が戦いに悔いなし！`;
 
     // 敗因アナリティクス診断メッセージ作成
     const enemyArchInfo = ARCHETYPE_INFO[cpu.archetype] || ARCHETYPE_INFO.one_shot_buster;
@@ -2645,10 +3014,24 @@ function spawnNextCpu() {
     cpu.stunTimer = 0;
     cpu.airY = 0;
     cpu.airVelY = 0;
-    cpu.speed = Math.min(7.2, 4.6 + currentWins * 0.14);
-    cpu.position.set(3.8, 0, -0.8);
+    cpu.speed = Math.min(7.8, 5.2 + currentWins * 0.14);
+
+    // 実寸大 160m×160m 渋谷大通りのストリートウェイポイントに敵を配置（#11 パトロール ➔ #8 索敵追尾）
+    const streetSpawns = [
+        new THREE.Vector3( 22.0, 0,   0.0), // 東大通り
+        new THREE.Vector3(  0.0, 0, -24.0), // 北大通り (109前)
+        new THREE.Vector3(-22.0, 0,   0.0), // 西大通り
+        new THREE.Vector3(  0.0, 0,  24.0), // 南大通り
+        new THREE.Vector3( 16.0, 0, -16.0)  // センター街斜め通り
+    ];
+    const spawnPt = streetSpawns[currentWins % streetSpawns.length];
+    cpu.position.copy(spawnPt);
     cpu.velocity.set(0, 0, 0);
     cpu.state = "idle";
+    cpu.aiMode = "patrol";
+    cpu.alerted = false;
+    cpu.patrolTarget.set(spawnPt.x * 0.6, 0, spawnPt.z * 0.6);
+    cpu.patrolTimer = 1.8;
 
     roundTimer = 99;
     document.getElementById('round-timer-val').innerText = roundTimer;
@@ -2665,7 +3048,7 @@ function spawnNextCpu() {
         battleStats.skillsUsed = 0;
     }
     player.sp = Math.min(player.maxSp, player.sp + 30);
-    player.position.set(-3.8, 0, 0.8);
+    player.position.set(-4.5, 0, 2.5);
     player.airY = 0;
     player.airVelY = 0;
     player.velocity.set(0, 0, 0);
@@ -2688,13 +3071,15 @@ function spawnNextCpu() {
     showAnnouncement(
         challengedGhostData && currentWins === 0
             ? `🔥 SNS挑戦状ゴースト「${challengedGhostData.name}」乱入！`
-            : `ROUND ${currentWins + 1} - FIGHT!`,
+            : `ROUND ${currentWins + 1} - 渋谷実寸大ストリート FIGHT!`,
         "#00f2fe"
     );
 }
 
 function resetGame() {
     currentWins = 0;
+    currentScore = 0;
+    addScore(0);
     document.getElementById('current-wins').innerText = currentWins;
     document.getElementById('result-modal').style.display = 'none';
     document.getElementById('milestone-modal').style.display = 'none';
@@ -3029,6 +3414,10 @@ function updatePlayerAutoAI(dt) {
     return false;
 }
 
+/**
+ * プレイリスト#8「敵に追尾させる」＆ #11「敵をウロウロさせる」：
+ * 索敵範囲(26m)外では渋谷の大通りをウロウロとパトロールし、索敵範囲に入ると「❗発見!」ポップアップ＆効果音とともに追尾・戦闘へ遷移！
+ */
 function updateCpuAI(dt) {
     if (!isGameActive || cpu.state === "down") return;
 
@@ -3042,39 +3431,226 @@ function updateCpuAI(dt) {
         return;
     }
 
-    cpu.aiTimer -= dt;
     const toPlayer = new THREE.Vector3().subVectors(player.position, cpu.position);
     const dist = toPlayer.length();
+
+    // プレイリスト#11: 索敵範囲外 (dist > 26m) かつ未交戦なら渋谷の大通りをウロウロとパトロール
+    if (dist > cpu.detectionRange && cpu.hp === cpu.maxHp) {
+        cpu.aiMode = "patrol";
+        cpu.alerted = false;
+        cpu.isGuarding = false;
+        cpu.patrolTimer -= dt;
+
+        const toPatrol = new THREE.Vector3().subVectors(cpu.patrolTarget, cpu.position);
+        if (cpu.patrolTimer <= 0 || toPatrol.length() < 2.0) {
+            // 大通り上のランダムなウェイポイントを次の目的地に設定
+            const streetWaypoints = [
+                new THREE.Vector3( 24, 0,   0),
+                new THREE.Vector3(-24, 0,   0),
+                new THREE.Vector3(  0, 0,  24),
+                new THREE.Vector3(  0, 0, -24),
+                new THREE.Vector3( 14, 0, -14),
+                new THREE.Vector3(-14, 0,  14)
+            ];
+            cpu.patrolTarget.copy(streetWaypoints[Math.floor(Math.random() * streetWaypoints.length)]);
+            cpu.patrolTimer = 3.2 + Math.random() * 2.0;
+        }
+        const dirPatrol = toPatrol.normalize();
+        cpu.rotationY = Math.atan2(dirPatrol.x, dirPatrol.z);
+        cpu.velocity.add(dirPatrol.multiplyScalar(cpu.speed * 0.62 * dt * 4.5));
+        return;
+    }
+
+    // プレイリスト#8: 索敵範囲内に入った瞬間、「❗索敵発見!」アラート発動 ➔ 追尾開始
+    if (!cpu.alerted) {
+        cpu.alerted = true;
+        SoundEngine.play('alert');
+        spawnDamageNumber(cpu.position.x, cpu.position.y + 2.0, cpu.position.z, "❗ 索敵発見!", "crit", "ALERT");
+    }
+
+    cpu.aiTimer -= dt;
     cpu.rotationY = Math.atan2(toPlayer.x, toPlayer.z);
 
     const atkScale = Math.pow(1.05, currentWins) * getArchetypeMultiplier(cpu.archetype, player.archetype);
 
     if (cpu.aiTimer <= 0) {
         cpu.aiTimer = Math.max(0.28, 0.62 - currentWins * 0.02) + Math.random() * 0.25;
-        if (dist > 2.6) {
+        if (dist > 3.1) {
             cpu.aiAction = "chase";
+            cpu.aiMode = "chase";
         } else {
+            cpu.aiMode = "combat";
             const r = Math.random();
-            if (r < 0.65) cpu.aiAction = "attack";
+            if (r < 0.68) cpu.aiAction = "attack";
             else cpu.aiAction = "guard";
         }
     }
 
     cpu.isGuarding = false;
     if (cpu.aiAction === "chase") {
-        cpu.velocity.add(toPlayer.clone().normalize().multiplyScalar(cpu.speed * dt * 5.2));
+        cpu.velocity.add(toPlayer.clone().normalize().multiplyScalar(cpu.speed * dt * 5.5));
     } else if (cpu.aiAction === "attack" && cpu.state !== "attack") {
         cpu.comboStep = (cpu.comboStep % 3) + 1;
         cpu.state = "attack";
         cpu.stateDuration = 0.46;
         cpu.stateTimer = 0.46;
-        cpu.velocity.add(toPlayer.clone().normalize().multiplyScalar(3.8));
+        SoundEngine.play('slash');
+        cpu.velocity.add(toPlayer.clone().normalize().multiplyScalar(4.0));
         spawnCrescentSlash(cpu.position, player.position, 0xff3838, cpu.comboStep, 1.15);
-        if (dist < 2.9 && cpu.stunTimer <= 0) {
+        if (dist < 3.2 && cpu.stunTimer <= 0) {
             applyDamage('player', 58 * atkScale);
         }
     } else if (cpu.aiAction === "guard") {
         cpu.isGuarding = true;
+    }
+}
+
+/**
+ * プレイリスト#9「敵のHPバーを作成」：
+ * 敵キャラクターの頭上3Dワールド座標を2Dスクリーン座標に投影して追従HPバー＆AI状態バッジを描画
+ */
+function updateEnemyWorldHud() {
+    const hud = document.getElementById('enemy-world-hud');
+    if (!hud || !cpu.group || !camera) return;
+
+    const headWorldPos = new THREE.Vector3(cpu.position.x, cpu.position.y + 2.45 + cpu.airY, cpu.position.z);
+    headWorldPos.project(camera);
+
+    // カメラの背後にある場合は非表示
+    if (headWorldPos.z > 1.0) {
+        hud.style.display = 'none';
+        return;
+    }
+
+    const screenX = (headWorldPos.x * 0.5 + 0.5) * window.innerWidth;
+    const screenY = (-(headWorldPos.y * 0.5) + 0.5) * window.innerHeight;
+
+    hud.style.display = 'block';
+    hud.style.left = `${screenX}px`;
+    hud.style.top = `${screenY}px`;
+
+    const nameEl = document.getElementById('ew-name');
+    if (nameEl) nameEl.innerText = cpu.bossInfo?.name || 'ENEMY';
+
+    const stateEl = document.getElementById('ew-ai-state');
+    if (stateEl) {
+        if (cpu.stunTimer > 0 || cpu.airY > 0.1) {
+            stateEl.innerText = '😵 ひるみ中!';
+            stateEl.style.background = '#e11d48';
+        } else if (cpu.aiMode === 'patrol') {
+            stateEl.innerText = '🐾 パトロール中';
+            stateEl.style.background = '#0284c7';
+        } else if (cpu.aiMode === 'chase') {
+            stateEl.innerText = '🏃 追尾中!';
+            stateEl.style.background = '#d97706';
+        } else {
+            stateEl.innerText = '⚔️ 交戦中!';
+            stateEl.style.background = '#dc2626';
+        }
+    }
+
+    const hpFill = document.getElementById('ew-hp-fill');
+    if (hpFill) hpFill.style.width = `${Math.max(0, (cpu.hp / cpu.maxHp) * 100)}%`;
+
+    const poiseFill = document.getElementById('ew-poise-fill');
+    if (poiseFill) poiseFill.style.width = `${Math.max(0, (cpu.poise / cpu.maxPoise) * 100)}%`;
+}
+
+/**
+ * プレイリスト#3「アニメーションを切り替え」：
+ * Animator State Machine の現在ステートを左下ピルにリアルタイム表示
+ */
+function updateAnimatorStatePill(isMoving) {
+    const pill = document.getElementById('animator-state-pill');
+    if (!pill) return;
+    const stateMap = {
+        idle: isMoving ? "Animator: Run [街路移動]" : "Animator: Idle [待機]",
+        attack: `Animator: Attack-${player.comboStep} [コンボ斬撃]`,
+        skill: "Animator: SkillArts [固有スキル]",
+        special: "Animator: UltimateEX [必殺奥義]",
+        dodge: "Animator: DodgeStep [無敵回避]",
+        jump: "Animator: Jump [空中飛躍]",
+        damaged: "Animator: Damaged [被弾ひるみ]",
+        down: "Animator: Down [戦闘不能]"
+    };
+    pill.innerText = `🎬 ${stateMap[player.state] || "Animator: Idle"} | LockOn: ${input.lockOn ? 'ON' : 'OFF'}`;
+}
+
+/**
+ * 1:1 実寸大 160m×160m 渋谷都市区画 2Dレーダーミニマップ描画
+ * 高層ビル28棟のフットプリント・大通り・破壊可能プロップ・敵位置・プレイヤー視線コーンをリアルタイム描画
+ */
+function renderCityMinimap() {
+    const canvas = document.getElementById('city-minimap-canvas');
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    const W = canvas.width;
+    const H = canvas.height;
+    const scale = (W * 0.5) / 80.0; // ±80m (160m×160m) をマップ全域に投影
+    const toMapX = x => W * 0.5 + x * scale;
+    const toMapY = z => H * 0.5 + z * scale;
+
+    ctx.clearRect(0, 0, W, H);
+    ctx.fillStyle = '#0b1120';
+    ctx.fillRect(0, 0, W, H);
+
+    // 1. 南北大通り・東西大通り・斜めセンター街・中央スクランブル交差点
+    ctx.fillStyle = '#1e293b';
+    ctx.fillRect(toMapX(-12), 0, 24 * scale, H);
+    ctx.fillRect(0, toMapY(-12), W, 24 * scale);
+
+    // 2. 実寸大高層ビル群 (AABBコライダー)
+    ctx.fillStyle = 'rgba(56, 189, 248, 0.25)';
+    ctx.strokeStyle = 'rgba(56, 189, 248, 0.55)';
+    ctx.lineWidth = 1;
+    cityBuildingsColliderList.forEach(b => {
+        const bx = toMapX(b.x - b.hw);
+        const by = toMapY(b.z - b.hd);
+        const bw = b.hw * 2 * scale;
+        const bh = b.hd * 2 * scale;
+        ctx.fillRect(bx, by, bw, bh);
+        ctx.strokeRect(bx, by, bw, bh);
+    });
+
+    // 3. フィールド境界リング (半径75m)
+    ctx.strokeStyle = 'rgba(0, 242, 254, 0.45)';
+    ctx.beginPath();
+    ctx.arc(W * 0.5, H * 0.5, arenaRadius * scale, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // 4. 街中の破壊可能オブジェクト（自販機・ネオン看板・バリケード）
+    ctx.fillStyle = '#fde047';
+    cityStreetProps.forEach(p => {
+        if (!p.alive) return;
+        ctx.fillRect(toMapX(p.x) - 1.5, toMapY(p.z) - 1.5, 3, 3);
+    });
+
+    // 5. 敵（CPU）の位置＆索敵範囲リング
+    const cx = toMapX(cpu.position.x);
+    const cy = toMapY(cpu.position.z);
+    if (cpu.aiMode === 'patrol') {
+        ctx.strokeStyle = 'rgba(251, 191, 36, 0.28)';
+        ctx.beginPath();
+        ctx.arc(cx, cy, cpu.detectionRange * scale, 0, Math.PI * 2);
+        ctx.stroke();
+    }
+    ctx.fillStyle = '#ff4757';
+    ctx.beginPath();
+    ctx.arc(cx, cy, 4.2, 0, Math.PI * 2);
+    ctx.fill();
+
+    // 6. プレイヤーの位置＆向き
+    const px = toMapX(player.position.x);
+    const py = toMapY(player.position.z);
+    ctx.fillStyle = '#00f2fe';
+    ctx.beginPath();
+    ctx.arc(px, py, 4.2, 0, Math.PI * 2);
+    ctx.fill();
+
+    const coordEl = document.getElementById('minimap-coords');
+    if (coordEl) {
+        const distToEnemy = Math.hypot(cpu.position.x - player.position.x, cpu.position.z - player.position.z);
+        coordEl.innerText = `X: ${player.position.x.toFixed(1)}m | Z: ${player.position.z.toFixed(1)}m | 敵距離: ${distToEnemy.toFixed(1)}m`;
     }
 }
 
@@ -3151,7 +3727,7 @@ function updateFullBodyMotion(entity, dt, isMoving) {
 }
 
 // ========================================================
-// 13. メインアニメーションループ（Bloom合成 ＆ スマート観戦カメラ）
+// 13. メインアニメーションループ（Bloom合成 ＆ スマート観戦カメラ ＆ 実寸大都市コリジョン）
 // ========================================================
 function animate() {
     requestAnimationFrame(animate);
@@ -3187,6 +3763,11 @@ function animate() {
             if (player.hpRegen > 0 && player.hp > 0 && player.hp < player.maxHp) {
                 player.hp = Math.min(player.maxHp, player.hp + player.hpRegen);
             }
+            // プレイリスト#14: 制限時間0秒到達時の判定
+            if (roundTimer === 0 && isGameActive) {
+                if (player.hp >= cpu.hp) handleVictory();
+                else handleGameOver();
+            }
         }
         if (player.overdriveTimer > 0) {
             player.overdriveTimer = Math.max(0, player.overdriveTimer - dt);
@@ -3194,6 +3775,19 @@ function animate() {
         // 🟣 魔導トークンによるSP獲得速度倍率
         player.sp = Math.min(player.maxSp, player.sp + 4.8 * (player.spRegenMult || 1.0) * dt);
         updateGauges();
+    }
+
+    // プレイリスト#4: 破壊された街中ストリートプロップの時間差リスポーン更新
+    for (let i = 0; i < cityStreetProps.length; i++) {
+        const prop = cityStreetProps[i];
+        if (!prop.alive) {
+            prop.respawnTimer -= dt;
+            if (prop.respawnTimer <= 0) {
+                prop.alive = true;
+                prop.mesh.visible = true;
+                spawnGroundSlamVFX(new THREE.Vector3(prop.x, 0, prop.z), 0x00f2fe, 0.75);
+            }
+        }
     }
 
     // プレイヤー周囲のキラキラオーラ更新
@@ -3204,7 +3798,7 @@ function animate() {
         p.mesh.rotation.y += dt * 4;
     });
 
-    // コロシアム全体の浮遊マナ粒子アニメーション
+    // 都市全体の浮遊ネオン粒子アニメーション
     ambientSparkles.forEach(sp => {
         sp.angle += dt * sp.speed * 0.4;
         sp.mesh.position.x = Math.cos(sp.angle) * sp.radius;
@@ -3280,6 +3874,7 @@ function animate() {
         pr.life -= dt;
         pr.mesh.position.addScaledVector(pr.vel, dt);
         if (pr.mesh.position.distanceTo(cpu.position.clone().add(new THREE.Vector3(0, 1.1, 0))) < 1.35) {
+            SoundEngine.play('hit');
             const dmg = Math.round(54 * player.atkScale * getArchetypeMultiplier(player.archetype, cpu.archetype));
             cpu.stunTimer = 0.48 * player.stunPower;
             cpu.state = "stunned";
@@ -3289,6 +3884,7 @@ function animate() {
             spawnDamageNumber(cpu.position.x, cpu.position.y + cpu.airY, cpu.position.z, dmg, "stun", "MAGIC!");
             applyDamage('cpu', dmg);
             addCombo(1, dmg);
+            addScore(dmg);
             scene.remove(pr.mesh);
             projectilesList.splice(i, 1);
             continue;
@@ -3299,15 +3895,16 @@ function animate() {
         }
     }
 
-    // 位置＆アリーナ境界
+    // 位置更新 ＆ 実寸大高層ビルAABBコリジョン (#2) ＆ 半径75m都市境界
     player.position.addScaledVector(player.velocity, dt);
     player.velocity.multiplyScalar(0.82);
     cpu.position.addScaledVector(cpu.velocity, dt);
     cpu.velocity.multiplyScalar(0.82);
 
     [player, cpu].forEach(ent => {
+        resolveCityBuildingCollisions(ent);
         const d = Math.hypot(ent.position.x, ent.position.z);
-        if (d > arenaRadius - 0.7) ent.position.multiplyScalar((arenaRadius - 0.7) / d);
+        if (d > arenaRadius - 0.8) ent.position.multiplyScalar((arenaRadius - 0.8) / d);
     });
 
     player.group.position.copy(player.position);
@@ -3315,9 +3912,23 @@ function animate() {
     cpu.group.position.copy(cpu.position);
     cpu.group.rotation.y = cpu.rotationY + Math.PI;
 
+    // プレイリスト#16: 3Dターゲットロックオン・デュアルレティクル更新
+    if (lockOnReticleMesh) {
+        lockOnReticleMesh.visible = input.lockOn && isGameActive;
+        if (lockOnReticleMesh.visible) {
+            lockOnReticleMesh.position.set(cpu.position.x, 0.08 + cpu.airY * 0.2, cpu.position.z);
+            lockOnReticleMesh.rotation.y += dt * 2.8;
+        }
+    }
+
     if (player.vrm) player.vrm.update(dt);
     updateFullBodyMotion(player, dt, playerMoving);
     updateFullBodyMotion(cpu, dt, cpu.velocity.lengthSq() > 0.25);
+
+    // プレイリスト#9: 3Dワールド追従 敵頭上HPバー ＆ #3 Animator State Pill ＆ 160m都市ミニマップ更新
+    updateEnemyWorldHud();
+    updateAnimatorStatePill(playerMoving);
+    renderCityMinimap();
 
     // エフェクト更新
     for (let i = effectsList.length - 1; i >= 0; i--) {
@@ -3330,13 +3941,15 @@ function animate() {
         }
     }
 
-    // ダイナミックTPS＆スマート観戦カメラワーク
+    // ダイナミックTPS＆スマート観戦カメラワーク（プレイリスト#16 ロックオン追従対応）
     const midPoint = new THREE.Vector3().addVectors(player.position, cpu.position).multiplyScalar(0.5);
     const toPlayerFromCpu = new THREE.Vector3().subVectors(player.position, cpu.position).normalize();
     const rightVec = new THREE.Vector3(-toPlayerFromCpu.z, 0, toPlayerFromCpu.x);
 
     let camTargetPos;
-    let lookTarget = new THREE.Vector3(midPoint.x, 1.25 + (player.airY + cpu.airY) * 0.35, midPoint.z);
+    let lookTarget = input.lockOn
+        ? new THREE.Vector3(midPoint.x, 1.35 + (player.airY + cpu.airY) * 0.35, midPoint.z)
+        : player.position.clone().add(new THREE.Vector3(0, 1.45 + player.airY * 0.5, 0));
 
     if (cinematicCameraMode === "zoom_player") {
         const frontDir = new THREE.Vector3(Math.sin(player.rotationY), 0, Math.cos(player.rotationY));
@@ -3346,19 +3959,19 @@ function animate() {
     } else if (isCinematicSpectator) {
         // 🎬 観戦カメラモード時はゆっくり周回しながらコンボ時にダイナミックズーム
         const orbitAng = elapsedTime * 0.35;
-        const zoomDist = comboHits >= 3 || cpu.airY > 0.2 ? 5.2 : 7.0;
+        const zoomDist = comboHits >= 3 || cpu.airY > 0.2 ? 5.6 : 7.8;
         camTargetPos = new THREE.Vector3(
             midPoint.x + Math.cos(orbitAng) * zoomDist,
-            2.3 + Math.sin(elapsedTime * 0.7) * 0.55,
+            2.6 + Math.sin(elapsedTime * 0.7) * 0.65,
             midPoint.z + Math.sin(orbitAng) * zoomDist
         );
         camera.position.lerp(camTargetPos, 0.08);
     } else {
-        const dynamicZoom = comboHits >= 3 || cpu.airY > 0.25 ? 3.65 : 4.4;
+        const dynamicZoom = comboHits >= 3 || cpu.airY > 0.25 ? 4.2 : 5.2;
         camTargetPos = player.position.clone()
             .addScaledVector(toPlayerFromCpu, dynamicZoom)
-            .addScaledVector(rightVec, -1.15)
-            .add(new THREE.Vector3(0, 2.75, 0));
+            .addScaledVector(rightVec, -1.35)
+            .add(new THREE.Vector3(0, 3.1, 0));
         camera.position.lerp(camTargetPos, 0.11);
     }
 
@@ -3390,7 +4003,7 @@ function onResize() {
 }
 
 // ========================================================
-// 14. 入力バインド（監督バー ＆ グラフ/ループダッシュボード ＆ パッド）
+// 14. 入力バインド（監督バー ＆ グラフ/ループダッシュボード ＆ プレイリスト#16/#7/#18操作）
 // ========================================================
 function openGraphLoopModal() {
     const modal = document.getElementById('graph-loop-modal');
@@ -3401,10 +4014,10 @@ function openGraphLoopModal() {
         const cmb = player.comboRoute || { starter: 'flash_step', linker: 'spiral_slash', finisher: 'sky_upper' };
         const ult = player.ultConfig || { form: 'meteor_drop', trait: 'vampire_heal' };
         body.innerHTML =
-            `<div>🕸️ <strong>Graph Engineering (状態遷移＆相性グラフ)</strong>: 現在フィールド <code>東京・渋谷スクランブル交差点 (半径${arenaRadius}m)</code> | プレイヤー相性ノード: <strong>${ARCHETYPE_INFO[player.archetype]?.label}</strong> vs 敵ノード: <strong>${ARCHETYPE_INFO[cpu.archetype]?.label}</strong></div>` +
+            `<div>🕸️ <strong>Graph Engineering (1:1実寸大都市＆状態遷移グラフ)</strong>: 現在フィールド <code>東京・渋谷 160m×160m 実寸大都市区画 (半径${arenaRadius}m / ビル28棟コライダー稼働中)</code> | プレイヤー相性: <strong>${ARCHETYPE_INFO[player.archetype]?.label}</strong> vs 敵ノード: <strong>${ARCHETYPE_INFO[cpu.archetype]?.label}</strong></div>` +
             `<div>🪙 <strong>Token Graph (15トークン配分エッジ)</strong>: 🔴剛撃:${t.atk} 🟡覇道:${t.range} 🔵蒼迅:${t.spd} 🟢堅守:${t.stun} 🟣魔導:${t.atkspd} ➔ ATK <strong>${player.atkScale.toFixed(2)}x</strong> / 範囲 <strong>${player.attackRange.toFixed(1)}m</strong> / HP <strong>${player.maxHp} (+${player.hpRegen}/s)</strong></div>` +
             `<div>⚔️ <strong>Combo & Ultimate DAG</strong>: [${COMBO_MOVE_EFFECTS[cmb.starter]?.label || cmb.starter}] ➔ [${COMBO_MOVE_EFFECTS[cmb.linker]?.label || cmb.linker}] ➔ [${COMBO_MOVE_EFFECTS[cmb.finisher]?.label || cmb.finisher}] | 奥義特性: <code>${ult.form} × ${ult.trait}</code></div>` +
-            `<div>🔄 <strong>Loop Engineering (自律進化テレメトリ)</strong>: 現在連勝 <strong>${currentWins} WIN</strong> (最高 ${highScore} WIN) | 累計与ダメ <strong>${battleStats.damageDealt.toLocaleString()}</strong> | 累計スタン <strong>${battleStats.stunsInflicted}回</strong> | 1週間継続進化ロードマップ: <code>PLATFORM_GRAPH_ROADMAP.md</code> 稼働中</div>`;
+            `<div>🔄 <strong>Loop Engineering (全19本プレイリスト統合テレメトリ)</strong>: 現在連勝 <strong>${currentWins} WIN</strong> | SCORE <strong>${currentScore.toLocaleString()}</strong> | 街オブジェクト破壊 <strong>${battleStats.propsDestroyed}基</strong> | 累計与ダメ <strong>${battleStats.damageDealt.toLocaleString()}</strong></div>`;
     }
     modal.style.display = 'flex';
 }
@@ -3420,6 +4033,83 @@ function toggleAutoBattle() {
         isAutoBattle ? '🤖 AUTO街バトル ON (登録AIガンビットで渋谷ストリート自動戦闘)' : '🎮 手動アクションモード ON',
         isAutoBattle ? '#10b981' : '#ffd32a'
     );
+}
+
+/**
+ * プレイリスト#16「敵をロックオン」トグル (Qキー / 上部🎯ロックオンボタン)
+ */
+function toggleLockOn() {
+    input.lockOn = !input.lockOn;
+    SoundEngine.play('lockon');
+    const btn = document.getElementById('btn-lockon-toggle');
+    if (btn) {
+        btn.innerText = input.lockOn ? '🎯 ロックオン: ON' : '🎯 ロックオン: OFF';
+        btn.classList.toggle('active', input.lockOn);
+    }
+    showAnnouncement(
+        input.lockOn ? '🎯 ターゲットロックオン ON (敵を自動補足)' : '🔓 ロックオン解除 (自由視点移動)',
+        '#00f2fe'
+    );
+}
+
+/**
+ * プレイリスト#7「効果音で世界を彩る」サウンド＆BGMトグル
+ */
+function toggleSoundEngine() {
+    const enabled = SoundEngine.toggle();
+    const btn = document.getElementById('btn-sound-toggle');
+    if (btn) {
+        btn.innerText = enabled ? '🔊 効果音/BGM: ON' : '🔇 効果音/BGM: OFF';
+        btn.classList.toggle('active', enabled);
+    }
+    showAnnouncement(
+        enabled ? '🔊 Web Audio シンセ効果音＆都市BGM ON' : '🔇 サウンドミュート',
+        enabled ? '#10b981' : '#94a3b8'
+    );
+}
+
+/**
+ * プレイリスト#18「ゲームを書き出す」：
+ * 現在のオリキャラデザイン・5種トークン配分・3段コンボルート・必殺奥義・AIガンビット・戦績をJSONファイルとして書き出し
+ */
+function exportCharacterBuildJson() {
+    const exportData = {
+        platform: "Unlimited Shibuya 1:1 City Colosseum",
+        exportedAt: new Date().toISOString(),
+        score: currentScore,
+        winStreak: currentWins,
+        highScore: highScore,
+        character: {
+            name: player.design.name,
+            archetype: player.archetype,
+            design: player.design,
+            motionType: player.motionType,
+            vfxElement: player.vfxElement,
+            skillName: player.skillName,
+            tokens: player.sliderPts,
+            stats: {
+                atkScale: player.atkScale,
+                attackRange: player.attackRange,
+                stunPower: player.stunPower,
+                atkSpeed: player.atkSpeed,
+                speed: player.speed,
+                maxHp: player.maxHp,
+                hpRegen: player.hpRegen,
+                spRegenMult: player.spRegenMult
+            },
+            comboRoute: player.comboRoute,
+            ultConfig: player.ultConfig,
+            gambits: player.gambits
+        },
+        challengeUrl: buildChallengeUrl()
+    };
+    const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
+    const link = document.createElement('a');
+    link.download = `${player.design.name.replace(/\s+/g, '_')}_build_export.json`;
+    link.href = URL.createObjectURL(blob);
+    link.click();
+    SoundEngine.play('lockon');
+    showAnnouncement('📦 オリキャラ＆AIビルドデータ (.json) を書き出しました！', '#ffd32a');
 }
 
 function toggleCinematicSpectator() {
@@ -3449,7 +4139,7 @@ function setupInputs() {
         if (k === 'v') performPlayerJump();
         if (k === 'p') toggleAutoBattle();
         if (k === ' ') { input.guard = true; e.preventDefault(); }
-        if (k === 'q') input.lockOn = !input.lockOn;
+        if (k === 'q') toggleLockOn();
     });
 
     window.addEventListener('keyup', e => {
@@ -3480,13 +4170,16 @@ function setupInputs() {
     bindPadBtn('btn-skl-dodge',  performPlayerDodge);
     bindPadBtn('btn-skl-jump',   performPlayerJump);
 
-    // 上部 監督・観戦コントロールバー ＆ 認定証・グラフ/ループボタン
+    // 上部 監督・観戦コントロールバー ＆ プレイリスト#16/#7/#18ボタン
     document.getElementById('open-cert-btn')?.addEventListener('click', () => openCertificateModal('SURVIVAL'));
     document.getElementById('btn-open-graph-loop')?.addEventListener('click', openGraphLoopModal);
     document.getElementById('btn-close-graph-loop')?.addEventListener('click', () => {
         document.getElementById('graph-loop-modal').style.display = 'none';
     });
     document.getElementById('btn-auto-toggle')?.addEventListener('click', toggleAutoBattle);
+    document.getElementById('btn-lockon-toggle')?.addEventListener('click', toggleLockOn);
+    document.getElementById('btn-sound-toggle')?.addEventListener('click', toggleSoundEngine);
+    document.getElementById('btn-export-build')?.addEventListener('click', exportCharacterBuildJson);
     document.getElementById('btn-cinematic-mode')?.addEventListener('click', toggleCinematicSpectator);
     document.getElementById('btn-live-brag')?.addEventListener('click', () => shareOnX('survival'));
 
@@ -3566,4 +4259,5 @@ document.addEventListener('DOMContentLoaded', () => {
     setupCreatorStudio();
     initScene();
 });
+
 

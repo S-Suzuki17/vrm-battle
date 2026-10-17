@@ -1376,4 +1376,121 @@ body {
     user-select: none;
 }
 
+.token-pip {
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    border: 1.5px solid #64748b;
+    background: rgba(255, 255, 255, 0.08);
+    margin: 0 2px;
+}
 
+.token-pip.filled {
+    background: radial-gradient(circle, #fff 10%, #00f2fe 70%);
+    border-color: #ffd32a;
+    box-shadow: 0 0 8px rgba(0, 242, 254, 0.85);
+}
+
+/* ========================================================
+   再生リスト#8/#9/#11/#16: 3Dワールド空間追従・敵頭上HPバー＆索敵ステータス
+   ======================================================== */
+.enemy-world-hud {
+    position: absolute;
+    z-index: 16;
+    width: 146px;
+    transform: translate(-50%, -100%);
+    pointer-events: none;
+    background: rgba(9, 14, 26, 0.78);
+    border: 1.5px solid rgba(255, 71, 87, 0.75);
+    border-radius: 7px;
+    padding: 4px 6px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.65);
+    transition: opacity 0.15s ease;
+}
+
+.ew-ai-state {
+    font-size: 10px;
+    font-weight: 900;
+    color: #ffd32a;
+    text-align: center;
+    margin-bottom: 3px;
+    white-space: nowrap;
+    text-shadow: 0 1px 3px #000;
+}
+
+.ew-hp-track {
+    width: 100%;
+    height: 7px;
+    background: rgba(255, 255, 255, 0.15);
+    border-radius: 3px;
+    overflow: hidden;
+    margin-bottom: 2px;
+}
+
+.ew-hp-fill {
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(90deg, #ff4757, #ff7f50);
+    transition: width 0.12s ease;
+}
+
+.ew-poise-track {
+    width: 100%;
+    height: 4px;
+    background: rgba(255, 255, 255, 0.12);
+    border-radius: 2px;
+    overflow: hidden;
+}
+
+.ew-poise-fill {
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(90deg, #00f2fe, #70a1ff);
+    transition: width 0.12s ease;
+}
+
+/* ========================================================
+   実寸大1:1スケール (160m×160m) 渋谷都市街区レーダーミニマップ
+   ======================================================== */
+.city-minimap-wrap {
+    position: absolute;
+    right: 18px;
+    top: 112px;
+    z-index: 18;
+    background: rgba(9, 14, 26, 0.84);
+    border: 2px solid rgba(0, 242, 254, 0.55);
+    border-radius: 10px;
+    padding: 6px;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.7);
+    backdrop-filter: blur(6px);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 3px;
+}
+
+.minimap-header {
+    font-size: 10px;
+    font-weight: 900;
+    color: #00f2fe;
+    letter-spacing: 0.3px;
+}
+
+#city-minimap-canvas {
+    border-radius: 6px;
+    border: 1px solid rgba(255, 255, 255, 0.22);
+    background: #0b111e;
+}
+
+.minimap-sub {
+    font-size: 10px;
+    font-weight: 800;
+    color: #cbd5e1;
+}
+
+body.cinematic-spectator .city-minimap-wrap,
+body.cinematic-spectator .enemy-world-hud {
+    opacity: 0;
+    pointer-events: none;
+}
