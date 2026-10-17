@@ -1,87 +1,175 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { VRMLoaderPlugin, VRMUtils } from '@pixiv/three-vrm';
 
 // ========================================================
-// 1. CPUボス 5大バリエーション定義 (画像1・2のモンスター＆ボス完全再現)
+// 1. CPUボス 5大バリエーション ＆ 非同期ゴーストプール定義
 // ========================================================
+const ARCHETYPE_INFO = {
+    speed_assassin: {
+        id: "speed_assassin",
+        label: "⚡ スピード連撃型",
+        beats: "one_shot_buster",
+        color: "#00f2fe"
+    },
+    one_shot_buster: {
+        id: "one_shot_buster",
+        label: "💥 一撃必殺・広範囲型",
+        beats: "iron_counter",
+        color: "#ff6b6b"
+    },
+    iron_counter: {
+        id: "iron_counter",
+        label: "🛡️ 鉄壁ガード・カウンター型",
+        beats: "speed_assassin",
+        color: "#ffd32a"
+    }
+};
+
 const CPU_BOSS_TYPES = [
     {
         id: "oni_berserker",
         name: "赤鬼オーガ・ゴウラ",
-        style: "重撃ハンマー型（武器アリ）",
+        ghostOwner: "@Goura_Destroyer",
+        style: "💥 一撃必殺・重撃ハンマー型",
+        archetype: "one_shot_buster",
         category: "melee-weapon",
         skinColor: 0xb33939,
         armorColor: 0x7d1111,
         accentColor: 0xffdd59,
         scale: 1.28,
-        poiseMax: 110
+        poiseMax: 110,
+        presetSliders: { atk: 36, range: 34, stun: 18, atkspd: 6, spd: 6 },
+        presetGambits: [
+            { cond: "sp_50", act: "ult_ex" },
+            { cond: "dist_near", act: "atk_launch" },
+            { cond: "always", act: "atk_wide" }
+        ]
     },
     {
         id: "spiked_behemoth",
         name: "棘獣ベヒーモス・ガルム",
-        style: "剛腕ラッシュ型（棘装甲）",
+        ghostOwner: "@Garm_Speedster",
+        style: "⚡ スピード剛腕ラッシュ型",
+        archetype: "speed_assassin",
         category: "melee-bare",
         skinColor: 0x8c6239,
         armorColor: 0x4a3525,
         accentColor: 0xff9f1a,
         scale: 1.35,
-        poiseMax: 125
+        poiseMax: 125,
+        presetSliders: { atk: 16, range: 14, stun: 26, atkspd: 26, spd: 18 },
+        presetGambits: [
+            { cond: "enemy_stun", act: "skill_arts" },
+            { cond: "dist_near", act: "atk_rush" },
+            { cond: "always", act: "approach" }
+        ]
     },
     {
         id: "stone_golem",
         name: "古代機兵ゴーレム",
-        style: "超重装甲型（岩石砲）",
+        ghostOwner: "@Aegis_Golem99",
+        style: "🛡️ 鉄壁ガード・岩石砲型",
+        archetype: "iron_counter",
         category: "snipe-bare",
         skinColor: 0x957d65,
         armorColor: 0x5c4d3c,
         accentColor: 0x00f2fe,
         scale: 1.38,
-        poiseMax: 140
+        poiseMax: 140,
+        presetSliders: { atk: 24, range: 28, stun: 32, atkspd: 8, spd: 8 },
+        presetGambits: [
+            { cond: "enemy_attack", act: "guard_counter" },
+            { cond: "sp_20", act: "skill_arts" },
+            { cond: "always", act: "atk_wide" }
+        ]
     },
     {
         id: "paladin_knight",
         name: "聖堂重装騎士・ガウェイン",
-        style: "鉄壁ガード＆大剣型",
+        ghostOwner: "@Gawain_HolyOrder",
+        style: "🛡️ 鉄壁ガード＆聖大剣型",
+        archetype: "iron_counter",
         category: "melee-weapon",
         skinColor: 0xdcdde1,
         armorColor: 0x718093,
         accentColor: 0xfbc531,
         scale: 1.22,
-        poiseMax: 115
+        poiseMax: 115,
+        presetSliders: { atk: 22, range: 24, stun: 28, atkspd: 14, spd: 12 },
+        presetGambits: [
+            { cond: "enemy_attack", act: "guard_counter" },
+            { cond: "sp_50", act: "ult_ex" },
+            { cond: "always", act: "atk_launch" }
+        ]
     },
     {
         id: "lizard_dragonkin",
         name: "竜鱗リザード・ドラコ",
-        style: "高速爪牙＆火球型",
+        ghostOwner: "@Draco_Blitz",
+        style: "⚡ 高速爪牙＆火球アサシン型",
+        archetype: "speed_assassin",
         category: "snipe-weapon",
         skinColor: 0x4cd137,
         armorColor: 0x218c74,
         accentColor: 0xff5e57,
         scale: 1.18,
-        poiseMax: 95
+        poiseMax: 95,
+        presetSliders: { atk: 14, range: 16, stun: 20, atkspd: 28, spd: 22 },
+        presetGambits: [
+            { cond: "sp_50", act: "ult_ex" },
+            { cond: "enemy_guard", act: "atk_launch" },
+            { cond: "always", act: "atk_rush" }
+        ]
     }
 ];
 
+// URLパラメータ (?ghost=...) からのSNS挑戦状ゴーストデータ
+let challengedGhostData = null;
+
+// Blender 5.2 Cycles プリレンダリング画像キャッシュ（証明書カード＆テクスチャ用）
+const cyclesImages = {
+    showcase: null,
+    heroPortrait: null,
+    oniPortrait: null
+};
+
 // ========================================================
-// 2. ゲーム全体ステート ＆ プレイヤー設定（1人1体制限・範囲内パラメータ）
+// 2. ゲーム全体ステート ＆ プレイヤー設定（1人1体制限・負けるまでロック）
 // ========================================================
 let currentWins = 0;
 let highScore = Number(localStorage.getItem("battle_high_score") || 0);
 let roundTimer = 99;
 let roundTimerAccum = 0;
 let isGameActive = true;
+let isAutoBattle = true;          // 3Dオート対戦（監督・軍師モード）デフォルトON
+let isCinematicSpectator = false; // UI非表示・シネマティック観戦モード
 let comboHits = 0;
 let comboDamage = 0;
 let comboResetTimer = null;
 
-// Three.js シーン管理
-let scene, camera, renderer, clock;
+// 敗北時アナリティクス計測用
+const battleStats = {
+    damageDealt: 0,
+    damageTaken: 0,
+    stunsInflicted: 0,
+    maxCombo: 0,
+    skillsUsed: 0,
+    lastEnemyMove: "豪腕クラッシュ"
+};
+
+// Three.js シーン＆ポストプロセス管理
+let scene, camera, renderer, composer, bloomPass, clock;
 let toonGradientMap = null;
+let cyclesEnvMap = null;
 let arenaRadius = 10.2;
 let effectsList = [];
 let projectilesList = [];
 let playerAuraParticles = [];
+let ambientSparkles = [];
 let dustTimer = 0;
 let cameraShakeIntensity = 0;
 let hitStopTimer = 0;
@@ -89,7 +177,7 @@ let isKoSlowMo = false;
 let slowMoTimer = 0;
 let cinematicCameraMode = null;
 
-// プレイヤー管理オブジェクト（キャラデザ・動き・VFX・パラメータ配分統合）
+// プレイヤー管理オブジェクト（キャラデザ・動き・VFX・AI作戦・パラメータ配分統合）
 const player = {
     group: null,
     animPivot: null,
@@ -101,9 +189,11 @@ const player = {
     isVrm: false,
     isCustomRig: false,
 
-    // 【1人1体制限ロック】
+    // 【負けるまで変更不可ロック (is_active)】
+    is_active: false,
     isCustomCharLocked: false,
     registeredCharName: "PLAYER (自作)",
+    archetype: "speed_assassin",
 
     // ① キャラデザイン設定
     design: {
@@ -122,12 +212,21 @@ const player = {
     themeColor: 0x00f2fe,
 
     // ④ 決められた範囲内で配分された各種パラメータ（合計100PT上限）
+    sliderPts: { atk: 20, range: 20, stun: 20, atkspd: 20, spd: 20 },
     atkScale: 1.05,       // 攻撃力倍率 [0.85x 〜 1.40x]
     attackRange: 3.4,     // 通常技範囲 [2.4m 〜 4.5m]
     specialRange: 11.5,   // 必殺技範囲 [m]
     stunPower: 1.12,      // ひるませ力・崩し [0.80x 〜 1.50x]
     atkSpeed: 1.08,       // 攻撃速度倍率 [0.85x 〜 1.35x]
     speed: 6.3,           // 移動速度 [5.2 〜 8.0]
+
+    // ⑤ オート対戦用 AI作戦ガンビット (IF条件 + THEN行動 × 3スロット)
+    gambits: [
+        { cond: "sp_50", act: "ult_ex" },
+        { cond: "enemy_stun", act: "skill_arts" },
+        { cond: "always", act: "atk_rush" }
+    ],
+    aiDecisionTimer: 0,
 
     // バトルリアルタイム状態
     hp: 1000,
@@ -150,13 +249,14 @@ const player = {
     animTime: 0
 };
 
-// CPU管理オブジェクト（ひるみ・体幹ゲージ・打ち上げ対応）
+// CPU管理オブジェクト（ひるみ・体幹ゲージ・打ち上げ・非同期ゴースト対応）
 const cpu = {
     group: null,
     animPivot: null,
     mesh: null,
     joints: {},
     bossInfo: CPU_BOSS_TYPES[0],
+    archetype: "one_shot_buster",
     themeColor: 0xff4757,
     hp: 1000,
     maxHp: 1000,
@@ -194,12 +294,14 @@ const input = {
 // ========================================================
 function getToonGradientMap() {
     if (toonGradientMap) return toonGradientMap;
+    // 4段階のアニメ＋リッチ陰影グラデーションマップ
     const data = new Uint8Array([
-        95, 95, 110, 255,
-        185, 185, 198, 255,
+        75, 78, 98, 255,
+        145, 148, 168, 255,
+        215, 218, 230, 255,
         255, 255, 255, 255
     ]);
-    const tex = new THREE.DataTexture(data, 3, 1, THREE.RGBAFormat);
+    const tex = new THREE.DataTexture(data, 4, 1, THREE.RGBAFormat);
     tex.minFilter = THREE.NearestFilter;
     tex.magFilter = THREE.NearestFilter;
     tex.needsUpdate = true;
@@ -207,12 +309,17 @@ function getToonGradientMap() {
     return tex;
 }
 
-function createToonMaterial(colorHex, emissiveHex = 0x000000, emissiveIntensity = 0.0) {
-    return new THREE.MeshToonMaterial({
+/**
+ * Blender Cycles環境マップ反射 ＆ アニメ調リムハイライト対応ハイブリッドマテリアル
+ */
+function createToonMaterial(colorHex, emissiveHex = 0x000000, emissiveIntensity = 0.0, metalness = 0.18, roughness = 0.42) {
+    return new THREE.MeshStandardMaterial({
         color: new THREE.Color(colorHex),
-        gradientMap: getToonGradientMap(),
         emissive: new THREE.Color(emissiveHex),
-        emissiveIntensity: emissiveIntensity
+        emissiveIntensity: emissiveIntensity,
+        metalness: metalness,
+        roughness: roughness,
+        envMapIntensity: 1.35
     });
 }
 
@@ -222,7 +329,7 @@ function createToonMaterial(colorHex, emissiveHex = 0x000000, emissiveIntensity 
 function addAnimeOutline(mesh, thickness = 0.022) {
     if (!mesh || !mesh.geometry) return mesh;
     const outlineMat = new THREE.MeshBasicMaterial({
-        color: 0x111318,
+        color: 0x0d1017,
         side: THREE.BackSide
     });
     const outlineMesh = new THREE.Mesh(mesh.geometry, outlineMat);
@@ -240,19 +347,37 @@ function createOutlinedPart(geometry, material, outlineThickness = 0.024) {
     return m;
 }
 
+/**
+ * Blender 5.2 Cycles レンダリング画像（証明書カード＆ポートレート用）をプリロード
+ */
+function preloadCyclesAssets() {
+    const loadImg = (src, key) => {
+        const img = new Image();
+        img.crossOrigin = "anonymous";
+        img.onload = () => { cyclesImages[key] = img; };
+        img.src = src;
+    };
+    loadImg('./assets/renders/cycles_battle_showcase.png', 'showcase');
+    loadImg('./assets/renders/cycles_hero_portrait.png', 'heroPortrait');
+    loadImg('./assets/renders/cycles_oni_portrait.png', 'oniPortrait');
+}
+
 // ========================================================
-// 4. Three.js シーン初期化 ＆ 昼の絶景コロシアム構築 (画像1・2完全再現)
+// 4. Three.js シーン初期化 ＆ Blender Cycles 絶景コロシアム構築
 // ========================================================
 async function initScene() {
+    preloadCyclesAssets();
+    parseUrlGhostChallenger();
+
     const container = document.getElementById('three-canvas-container');
     const width = container.clientWidth || window.innerWidth;
     const height = container.clientHeight || window.innerHeight;
 
     scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x6ab0de);
-    scene.fog = new THREE.FogExp2(0x8ecae6, 0.009);
+    scene.background = new THREE.Color(0x5ea8dc);
+    scene.fog = new THREE.FogExp2(0x8ecae6, 0.0075);
 
-    camera = new THREE.PerspectiveCamera(46, width / height, 0.1, 300);
+    camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 320);
     camera.position.set(-5.8, 3.3, 6.2);
 
     renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
@@ -261,17 +386,30 @@ async function initScene() {
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.12;
+    renderer.toneMappingExposure = 1.18;
     container.appendChild(renderer.domElement);
+
+    // ポストプロセス（UnrealBloomPass による Cycles 発光・斬撃・魔法陣の輝き強調）
+    composer = new EffectComposer(renderer);
+    const renderPass = new RenderPass(scene, camera);
+    composer.addPass(renderPass);
+
+    bloomPass = new UnrealBloomPass(
+        new THREE.Vector2(width, height),
+        0.38,  // strength: 剣閃やルーン魔法陣が美しく輝く強度
+        0.55,  // radius
+        0.78   // threshold: 高輝度エフェクトとCycles反射ハイライトのみを発光
+    );
+    composer.addPass(bloomPass);
 
     clock = new THREE.Clock();
 
-    // 明るい昼の太陽光ライティング（セルシェーディングの陰影がパキッと出る設定）
-    const hemiLight = new THREE.HemisphereLight(0xdff9fb, 0x95afc0, 1.35);
-    hemiLight.position.set(0, 30, 0);
+    // 明るい昼の太陽光ライティング ＋ リムライト2灯（Cycles風3点照明）
+    const hemiLight = new THREE.HemisphereLight(0xe8f9fd, 0x8d99ae, 1.45);
+    hemiLight.position.set(0, 35, 0);
     scene.add(hemiLight);
 
-    const sunLight = new THREE.DirectionalLight(0xfff6d6, 2.3);
+    const sunLight = new THREE.DirectionalLight(0xfff5d6, 2.65);
     sunLight.position.set(16, 28, 18);
     sunLight.castShadow = true;
     sunLight.shadow.mapSize.width = 2048;
@@ -286,13 +424,22 @@ async function initScene() {
     sunLight.shadow.bias = -0.0005;
     scene.add(sunLight);
 
-    // 昼の絶景コロシアム（土の闘技場・木の柵・大樹・古代石柱・大海原・岩山）を構築
+    // キャラクターの立体感を際立たせるシアン＆ゴールドのバックリムライト
+    const rimLightCyan = new THREE.DirectionalLight(0x00f2fe, 0.95);
+    rimLightCyan.position.set(-18, 12, -16);
+    scene.add(rimLightCyan);
+
+    const rimLightWarm = new THREE.DirectionalLight(0xffbe0b, 0.75);
+    rimLightWarm.position.set(18, 10, -14);
+    scene.add(rimLightWarm);
+
+    // Blender 5.2 Cycles コロシアム構築
     createDaylightAnimeColosseum();
 
     // プレイヤー＆CPU生成
     createCharacters();
 
-    // 初期CPUボス配置
+    // 初期CPUボス（またはURL挑戦状ゴースト）配置
     spawnNextCpu();
 
     window.addEventListener('resize', onResize);
@@ -301,8 +448,27 @@ async function initScene() {
 
 function createDaylightAnimeColosseum() {
     const envGroup = new THREE.Group();
+    const texLoader = new THREE.TextureLoader();
 
-    // 1. 土と石畳の円形コロシアム床（プロシージャルキャンバス模様）
+    // 0. Blender 5.2 Cycles 360° パノラマ環境マップ＆スカイドーム読み込み
+    texLoader.load('./assets/renders/cycles_sky_env.png', skyTex => {
+        skyTex.mapping = THREE.EquirectangularReflectionMapping;
+        skyTex.colorSpace = THREE.SRGBColorSpace;
+        cyclesEnvMap = skyTex;
+        scene.environment = skyTex;
+
+        const skyDomeGeo = new THREE.SphereGeometry(185, 48, 32);
+        const skyDomeMat = new THREE.MeshBasicMaterial({
+            map: skyTex,
+            side: THREE.BackSide,
+            fog: false
+        });
+        const skyDome = new THREE.Mesh(skyDomeGeo, skyDomeMat);
+        skyDome.position.y = -6.0;
+        envGroup.add(skyDome);
+    });
+
+    // 1. Blender 5.2 Cycles レイトレーシング石畳＆古代ルーン刻印コロシアム床
     const groundCanvas = document.createElement('canvas');
     groundCanvas.width = 512;
     groundCanvas.height = 512;
@@ -313,40 +479,56 @@ function createDaylightAnimeColosseum() {
     grad.addColorStop(1, '#7c623a');
     gctx.fillStyle = grad;
     gctx.fillRect(0, 0, 512, 512);
-    // 土の色ムラと小石パッチ
-    for (let i = 0; i < 160; i++) {
-        gctx.fillStyle = i % 2 === 0 ? 'rgba(110, 82, 44, 0.22)' : 'rgba(230, 202, 148, 0.2)';
-        gctx.beginPath();
-        gctx.arc(Math.random() * 512, Math.random() * 512, 6 + Math.random() * 24, 0, Math.PI * 2);
-        gctx.fill();
-    }
-    const groundTex = new THREE.CanvasTexture(groundCanvas);
-    const floorMat = new THREE.MeshToonMaterial({ map: groundTex, gradientMap: getToonGradientMap() });
-    const floorMesh = new THREE.Mesh(new THREE.CylinderGeometry(arenaRadius + 1.5, arenaRadius + 2.2, 1.4, 48), floorMat);
+    const fallbackGroundTex = new THREE.CanvasTexture(groundCanvas);
+
+    const floorMat = new THREE.MeshStandardMaterial({
+        map: fallbackGroundTex,
+        roughness: 0.48,
+        metalness: 0.18,
+        envMapIntensity: 1.25
+    });
+
+    // Blender 5.2 Cycles でレンダリングした高精細石畳＆発光ルーン床テクスチャを適用
+    texLoader.load('./assets/renders/cycles_arena_ground.png', cyclesGroundTex => {
+        cyclesGroundTex.colorSpace = THREE.SRGBColorSpace;
+        cyclesGroundTex.anisotropy = 8;
+        floorMat.map = cyclesGroundTex;
+        floorMat.needsUpdate = true;
+    });
+
+    const floorMesh = new THREE.Mesh(new THREE.CylinderGeometry(arenaRadius + 1.5, arenaRadius + 2.2, 1.4, 64), floorMat);
     floorMesh.position.y = -0.7;
     floorMesh.receiveShadow = true;
     envGroup.add(floorMesh);
 
+    // アリーナ中央の黄金ルーン魔法陣リング（Bloom対応）
+    const runeInnerRing = new THREE.Mesh(
+        new THREE.RingGeometry(3.55, 3.72, 64),
+        new THREE.MeshBasicMaterial({ color: 0x00f2fe, side: THREE.DoubleSide, transparent: true, opacity: 0.65 })
+    );
+    runeInnerRing.rotation.x = -Math.PI / 2;
+    runeInnerRing.position.y = 0.02;
+    envGroup.add(runeInnerRing);
+
     // 外周の緑の芝生エッジ
-    const grassMat = createToonMaterial(0x588157);
-    const grassRing = new THREE.Mesh(new THREE.RingGeometry(arenaRadius - 0.3, arenaRadius + 3.2, 48), grassMat);
+    const grassMat = createToonMaterial(0x588157, 0x000000, 0, 0.05, 0.8);
+    const grassRing = new THREE.Mesh(new THREE.RingGeometry(arenaRadius - 0.3, arenaRadius + 3.2, 64), grassMat);
     grassRing.rotation.x = -Math.PI / 2;
     grassRing.position.y = 0.01;
     grassRing.receiveShadow = true;
     envGroup.add(grassRing);
 
-    // 2. 光る白い境界リング ＋ 木の杭と横木のフェンス（画像1・2の柵を再現）
-    const glowRingMat = new THREE.MeshBasicMaterial({ color: 0xfff3b0, side: THREE.DoubleSide, transparent: true, opacity: 0.75 });
-    const glowRing = new THREE.Mesh(new THREE.RingGeometry(arenaRadius - 0.12, arenaRadius + 0.08, 64), glowRingMat);
+    // 2. 光る黄金の境界リング ＋ 木の杭と横木のフェンス（画像1・2の柵を再現）
+    const glowRingMat = new THREE.MeshBasicMaterial({ color: 0xffe66d, side: THREE.DoubleSide, transparent: true, opacity: 0.85 });
+    const glowRing = new THREE.Mesh(new THREE.RingGeometry(arenaRadius - 0.14, arenaRadius + 0.10, 64), glowRingMat);
     glowRing.rotation.x = -Math.PI / 2;
     glowRing.position.y = 0.03;
     envGroup.add(glowRing);
 
-    const woodMat = createToonMaterial(0x6f4e37);
+    const woodMat = createToonMaterial(0x6f4e37, 0x000000, 0, 0.1, 0.72);
     const postCount = 28;
     for (let i = 0; i < postCount; i++) {
         const ang = (i / postCount) * Math.PI * 2;
-        // 手前側（カメラ側）は視界を遮らないよう開けておく
         if (ang > Math.PI * 0.22 && ang < Math.PI * 0.78) continue;
 
         const px = Math.cos(ang) * (arenaRadius + 0.3);
@@ -365,14 +547,14 @@ function createDaylightAnimeColosseum() {
     // 3. 右奥の「巨大な大樹 (Ancient Great Tree)」(画像1・2右上の象徴的な大樹)
     const treeGroup = new THREE.Group();
     treeGroup.position.set(7.5, 0, -9.8);
-    const trunkMat = createToonMaterial(0x5c4033);
+    const trunkMat = createToonMaterial(0x5c4033, 0x000000, 0, 0.08, 0.78);
     const trunk = createOutlinedPart(new THREE.CylinderGeometry(1.4, 2.4, 11.0, 12), trunkMat, 0.015);
     trunk.position.y = 5.0;
     trunk.rotation.z = 0.08;
     treeGroup.add(trunk);
 
-    const leafMat1 = createToonMaterial(0x386641);
-    const leafMat2 = createToonMaterial(0x6a994e);
+    const leafMat1 = createToonMaterial(0x386641, 0x0b1f10, 0.12, 0.05, 0.65);
+    const leafMat2 = createToonMaterial(0x6a994e, 0x163012, 0.15, 0.05, 0.60);
     const canopyPositions = [
         [0, 10.5, 0, 4.8], [-3.2, 9.2, 1.2, 3.6], [3.0, 9.5, -1.0, 3.8], [0.8, 12.2, 1.0, 3.5]
     ];
@@ -383,8 +565,9 @@ function createDaylightAnimeColosseum() {
     });
     envGroup.add(treeGroup);
 
-    // 4. 古代ギリシャ風の折れた石柱 ＆ 左奥の岩山クリフ (画像1・2背景)
-    const pillarMat = createToonMaterial(0x95a5a6);
+    // 4. 古代ギリシャ風の折れた石柱 ＆ 黄金かがり火クリスタル ＆ 左奥の岩山クリフ
+    const pillarMat = createToonMaterial(0x95a5a6, 0x000000, 0, 0.22, 0.52);
+    const crystalBeaconMat = new THREE.MeshBasicMaterial({ color: 0x00f2fe });
     const pillarCoords = [
         [-4.5, -11.5, 6.5, 0.05],
         [-8.8, -8.5, 4.2, -0.12],
@@ -392,14 +575,18 @@ function createDaylightAnimeColosseum() {
         [10.8, -6.2, 7.2, -0.18]
     ];
     pillarCoords.forEach(([x, z, h, tilt]) => {
-        const p = createOutlinedPart(new THREE.CylinderGeometry(0.65, 0.72, h, 12), pillarMat, 0.018);
+        const p = createOutlinedPart(new THREE.CylinderGeometry(0.65, 0.72, h, 14), pillarMat, 0.018);
         p.position.set(x, h / 2 - 0.2, z);
         p.rotation.z = tilt;
         envGroup.add(p);
+
+        const crystal = new THREE.Mesh(new THREE.OctahedronGeometry(0.32, 0), crystalBeaconMat);
+        crystal.position.set(x, h + 0.35, z);
+        envGroup.add(crystal);
     });
 
     // 左奥の岩山
-    const cliffMat = createToonMaterial(0x576574);
+    const cliffMat = createToonMaterial(0x576574, 0x000000, 0, 0.15, 0.68);
     for (let i = 0; i < 6; i++) {
         const rock = createOutlinedPart(new THREE.DodecahedronGeometry(3.2 + i * 0.6, 0), cliffMat, 0.012);
         rock.position.set(-13.5 + i * 2.2, 2.2 + (i % 2) * 1.5, -11.0 - i * 1.2);
@@ -416,9 +603,38 @@ function createDaylightAnimeColosseum() {
         envGroup.add(pebble);
     }
 
-    // 5. 遠景の青い大海原 (Ocean Horizon)
+    // 5. 空中を舞う黄金・蒼光の環境マナ粒子（32個）
+    const moteGeo = new THREE.OctahedronGeometry(0.055, 0);
+    for (let i = 0; i < 32; i++) {
+        const mMat = new THREE.MeshBasicMaterial({
+            color: i % 2 === 0 ? 0xffe66d : 0x00f2fe,
+            transparent: true,
+            opacity: 0.75
+        });
+        const mote = new THREE.Mesh(moteGeo, mMat);
+        const ang = Math.random() * Math.PI * 2;
+        const rad = 1.5 + Math.random() * (arenaRadius - 1.0);
+        const y = 0.4 + Math.random() * 3.6;
+        mote.position.set(Math.cos(ang) * rad, y, Math.sin(ang) * rad);
+        envGroup.add(mote);
+        ambientSparkles.push({
+            mesh: mote,
+            baseY: y,
+            angle: ang,
+            radius: rad,
+            speed: 0.18 + Math.random() * 0.35,
+            phase: Math.random() * Math.PI * 2
+        });
+    }
+
+    // 6. 遠景の青い大海原 (Cycles環境反射つきの水面)
     const seaGeo = new THREE.PlaneGeometry(360, 360);
-    const seaMat = new THREE.MeshToonMaterial({ color: 0x2e86de, gradientMap: getToonGradientMap() });
+    const seaMat = new THREE.MeshStandardMaterial({
+        color: 0x1e6bb8,
+        roughness: 0.16,
+        metalness: 0.65,
+        envMapIntensity: 1.6
+    });
     const sea = new THREE.Mesh(seaGeo, seaMat);
     sea.rotation.x = -Math.PI / 2;
     sea.position.y = -2.2;
@@ -1049,8 +1265,59 @@ function createGuardShield(colorHex) {
 }
 
 // ========================================================
-// 8. 🎨 オリキャラ・クリエイト＆導入工房（1人1体限定・範囲内パラメータ配分）
+// 8. 🎨 オリキャラ・クリエイト＆AI作戦工房（負けるまで変更不可ロック & 3すくみ）
 // ========================================================
+let studioSyncSlidersFn = null;
+
+function determinePlayerArchetype(ptAtk, ptRange, ptStun, ptAtkSpd, ptSpd, motionType) {
+    if (motionType === "speed_rush" || (ptAtkSpd + ptSpd >= 44)) {
+        return "speed_assassin";
+    }
+    if (motionType === "heavy_buster" || (ptAtk + ptRange >= 50)) {
+        return "one_shot_buster";
+    }
+    return "iron_counter";
+}
+
+function getArchetypeMultiplier(attackerArch, defenderArch) {
+    const info = ARCHETYPE_INFO[attackerArch];
+    if (info && info.beats === defenderArch) {
+        return 1.22; // 相性有利（3すくみ勝利でダメージ＆崩し1.22倍！）
+    }
+    return 1.0;
+}
+
+function parseUrlGhostChallenger() {
+    try {
+        const params = new URLSearchParams(window.location.search);
+        const raw = params.get('ghost');
+        if (!raw) return;
+        const decoded = JSON.parse(decodeURIComponent(atob(raw)));
+        if (decoded && decoded.name) {
+            challengedGhostData = decoded;
+        }
+    } catch (e) {
+        console.warn("Ghost URL parse skipped:", e);
+    }
+}
+
+function buildChallengeUrl() {
+    const payload = {
+        name: player.design.name,
+        streak: currentWins,
+        arch: player.archetype,
+        atk: player.atkScale,
+        range: player.attackRange,
+        stun: player.stunPower,
+        spd: player.speed,
+        sliders: player.sliderPts,
+        gambits: player.gambits
+    };
+    const encoded = btoa(encodeURIComponent(JSON.stringify(payload)));
+    const baseUrl = window.location.origin + window.location.pathname;
+    return `${baseUrl}?ghost=${encoded}`;
+}
+
 function setupCreatorStudio() {
     const modal = document.getElementById('creator-modal');
     const openBtn = document.getElementById('open-creator-btn');
@@ -1058,7 +1325,6 @@ function setupCreatorStudio() {
     const closeBtn = document.getElementById('close-creator-btn');
     const previewBtn = document.getElementById('btn-apply-preview');
     const lockBtn = document.getElementById('btn-lock-register');
-    const resetBtn = document.getElementById('reset-avatar-btn');
 
     const sliders = {
         atk: document.getElementById('sl-atk'),
@@ -1070,7 +1336,6 @@ function setupCreatorStudio() {
 
     const MAX_TOTAL_PT = 100;
 
-    // 合計100PTを超えないようにスライダーをリアルタイム制御し、決められた範囲にマッピング
     function syncSlidersAndCalculateStats(changedKey) {
         let total = Object.values(sliders).reduce((acc, el) => acc + Number(el.value), 0);
         if (total > MAX_TOTAL_PT && changedKey) {
@@ -1085,7 +1350,6 @@ function setupCreatorStudio() {
         const ptAtkSpd = Number(sliders.atkspd.value);
         const ptSpd = Number(sliders.spd.value);
 
-        // 決められた範囲（Min〜Max）への線形マッピング
         const calcAtk = Number((0.85 + (ptAtk / 40) * 0.55).toFixed(2));       // 0.85x 〜 1.40x
         const calcRange = Number((2.4 + (ptRange / 40) * 2.1).toFixed(1));     // 2.4m 〜 4.5m
         const calcStun = Number((0.80 + (ptStun / 40) * 0.70).toFixed(2));     // 0.80x 〜 1.50x
@@ -1103,40 +1367,81 @@ function setupCreatorStudio() {
         badge.innerText = `残り: ${rem} / ${MAX_TOTAL_PT} PT`;
         badge.style.background = rem === 0 ? '#10b981' : '#0284c7';
 
-        return { calcAtk, calcRange, calcStun, calcAtkSpd, calcSpd };
+        return {
+            ptAtk, ptRange, ptStun, ptAtkSpd, ptSpd,
+            calcAtk, calcRange, calcStun, calcAtkSpd, calcSpd
+        };
     }
+
+    studioSyncSlidersFn = syncSlidersAndCalculateStats;
 
     Object.entries(sliders).forEach(([key, el]) => {
         el.addEventListener('input', () => syncSlidersAndCalculateStats(key));
     });
 
-    // ワンクリック配分プリセット
+    // ワンクリック配分プリセット（3すくみ対応）
     document.querySelectorAll('.alloc-btn').forEach(btn => {
         btn.addEventListener('click', () => {
-            if (player.isCustomCharLocked) {
-                alert('🔒 既に1人1体のオリキャラが本登録（ロック）されています！');
+            if (player.is_active || player.isCustomCharLocked) {
+                showAnnouncement('🔒 出撃ロック中！敗北（引退）するまでキャラ変更はできません！', '#ff4757');
                 return;
             }
             const preset = btn.getAttribute('data-preset');
             if (preset === 'balance') {
-                sliders.atk.value = 20; sliders.range.value = 20; sliders.stun.value = 20; sliders.atkspd.value = 20; sliders.spd.value = 20;
+                sliders.atk.value = 14; sliders.range.value = 14; sliders.stun.value = 18; sliders.atkspd.value = 28; sliders.spd.value = 26;
+                document.getElementById('cr-motion').value = 'speed_rush';
+                document.getElementById('ai-cond-1').value = 'sp_50'; document.getElementById('ai-act-1').value = 'ult_ex';
+                document.getElementById('ai-cond-2').value = 'enemy_stun'; document.getElementById('ai-act-2').value = 'skill_arts';
+                document.getElementById('ai-cond-3').value = 'always'; document.getElementById('ai-act-3').value = 'atk_rush';
             } else if (preset === 'power_range') {
                 sliders.atk.value = 36; sliders.range.value = 36; sliders.stun.value = 16; sliders.atkspd.value = 6; sliders.spd.value = 6;
+                document.getElementById('cr-motion').value = 'heavy_buster';
+                document.getElementById('ai-cond-1').value = 'sp_50'; document.getElementById('ai-act-1').value = 'ult_ex';
+                document.getElementById('ai-cond-2').value = 'enemy_guard'; document.getElementById('ai-act-2').value = 'atk_launch';
+                document.getElementById('ai-cond-3').value = 'always'; document.getElementById('ai-act-3').value = 'atk_wide';
             } else if (preset === 'combo_stun') {
-                sliders.atk.value = 12; sliders.range.value = 14; sliders.stun.value = 34; sliders.atkspd.value = 24; sliders.spd.value = 16;
+                sliders.atk.value = 18; sliders.range.value = 18; sliders.stun.value = 34; sliders.atkspd.value = 16; sliders.spd.value = 14;
+                document.getElementById('cr-motion').value = 'acrobat_martial';
+                document.getElementById('ai-cond-1').value = 'enemy_attack'; document.getElementById('ai-act-1').value = 'guard_counter';
+                document.getElementById('ai-cond-2').value = 'enemy_stun'; document.getElementById('ai-act-2').value = 'skill_arts';
+                document.getElementById('ai-cond-3').value = 'always'; document.getElementById('ai-act-3').value = 'atk_launch';
             }
             syncSlidersAndCalculateStats();
         });
     });
 
+    function readGambitsFromUI() {
+        return [
+            {
+                cond: document.getElementById('ai-cond-1')?.value || 'sp_50',
+                act: document.getElementById('ai-act-1')?.value || 'ult_ex'
+            },
+            {
+                cond: document.getElementById('ai-cond-2')?.value || 'enemy_stun',
+                act: document.getElementById('ai-act-2')?.value || 'skill_arts'
+            },
+            {
+                cond: document.getElementById('ai-cond-3')?.value || 'always',
+                act: document.getElementById('ai-act-3')?.value || 'atk_rush'
+            }
+        ];
+    }
+
     function applyStudioSettingsToPlayer(lockRegistration = false) {
-        if (player.isCustomCharLocked) {
-            showAnnouncement(`🔒 1人1体制限中！ (${player.registeredCharName})`, "#ff4757");
-            alert(`⚠️ オリキャラの導入・登録は【1人1体まで】です！\n現在の登録キャラ: ${player.registeredCharName}\n\n変更したい場合は左下の「🗑️ 登録解除(0連勝へ)」で連勝をリセットしてください。`);
+        if (player.is_active || player.isCustomCharLocked) {
+            showAnnouncement(`🔒 出撃ロック中！(${player.registeredCharName}) 負けるまで変更不可！`, "#ff4757");
             return;
         }
 
         const stats = syncSlidersAndCalculateStats();
+        player.sliderPts = {
+            atk: stats.ptAtk,
+            range: stats.ptRange,
+            stun: stats.ptStun,
+            atkspd: stats.ptAtkSpd,
+            spd: stats.ptSpd
+        };
+
         player.design.name = document.getElementById('cr-name').value.trim() || "PLAYER (自作)";
         player.design.style = document.getElementById('cr-style').value;
         player.design.weapon = document.getElementById('cr-weapon').value;
@@ -1154,6 +1459,11 @@ function setupCreatorStudio() {
         player.atkSpeed = stats.calcAtkSpd;
         player.speed = stats.calcSpd;
         player.specialRange = Number((player.attackRange * 3.1).toFixed(1));
+        player.gambits = readGambitsFromUI();
+
+        player.archetype = determinePlayerArchetype(
+            stats.ptAtk, stats.ptRange, stats.ptStun, stats.ptAtkSpd, stats.ptSpd, player.motionType
+        );
 
         // 外部VRMから自作デザインへ戻す場合はクリーンアップ
         if (player.vrm) {
@@ -1177,7 +1487,7 @@ function setupCreatorStudio() {
         if (lockRegistration) {
             lockCustomCharacterSlot(player.design.name);
             modal.style.display = 'none';
-            showAnnouncement(`🔒 ${player.design.name} を本登録しました！(1/1体)`, "#00f2fe");
+            showAnnouncement(`🚀 ${player.design.name} 出撃ロック完了！(敗北するまで変更不可)`, "#00f2fe");
         } else {
             modal.style.display = 'none';
             showAnnouncement(`✨ プレビュー反映完了！`, "#ffd32a");
@@ -1189,12 +1499,6 @@ function setupCreatorStudio() {
     closeBtn.addEventListener('click', () => { modal.style.display = 'none'; });
     previewBtn.addEventListener('click', () => applyStudioSettingsToPlayer(false));
     lockBtn.addEventListener('click', () => applyStudioSettingsToPlayer(true));
-
-    resetBtn.addEventListener('click', () => {
-        const ok = confirm(`⚠️ 登録済みオリキャラ「${player.registeredCharName}」を解除すると、現在の連勝記録（${currentWins}連勝）も 0 にリセットされます。\nよろしいですか？`);
-        if (!ok) return;
-        unlockAndResetCharacter();
-    });
 
     // D&D ＆ 外部ファイル（.vrm / .glb / .png）導入
     const dropArea = document.getElementById('drop-area');
@@ -1224,71 +1528,111 @@ function setupCreatorStudio() {
     updatePlayerSpecHud();
 }
 
+/**
+ * 出撃登録（is_active = true）: 連勝中・生存中は一切の変更・解除をロック！
+ */
 function lockCustomCharacterSlot(charName) {
+    player.is_active = true;
     player.isCustomCharLocked = true;
     player.registeredCharName = charName;
 
     const badge = document.getElementById('slot-limit-badge');
     if (badge) {
-        badge.innerText = `🔒 1/1体 登録済`;
+        badge.innerText = `🔒 出撃ロック中 (敗北まで変更不可)`;
         badge.classList.add('locked');
     }
     const regLabel = document.getElementById('registered-char-label');
     if (regLabel) {
-        regLabel.innerText = `${charName} (1/1体ロック中)`;
+        regLabel.innerText = `${charName} (サバイバル出撃中・変更不可)`;
         regLabel.style.color = '#ffd32a';
     }
-    const resetBtn = document.getElementById('reset-avatar-btn');
-    if (resetBtn) resetBtn.style.display = 'inline-block';
     const previewBtn = document.getElementById('btn-apply-preview');
     const lockBtn = document.getElementById('btn-lock-register');
     if (previewBtn) previewBtn.disabled = true;
     if (lockBtn) {
-        lockBtn.innerText = `🔒 1人1体 本登録済み (${charName})`;
+        lockBtn.innerText = `🔒 出撃中: ${charName} (敗北するまで変更不可)`;
         lockBtn.disabled = true;
     }
 }
 
-function unlockAndResetCharacter() {
+/**
+ * 敗北時（引退時）のみ呼ばれるロック解除処理 (is_active = false)
+ */
+function unlockCharacterOnDefeat() {
+    player.is_active = false;
     player.isCustomCharLocked = false;
-    player.registeredCharName = "PLAYER (自作)";
+
     const badge = document.getElementById('slot-limit-badge');
     if (badge) {
-        badge.innerText = `🟢 0/1体 (未ロック)`;
+        badge.innerText = `🟢 編成可能 (引退によりロック解除)`;
         badge.classList.remove('locked');
     }
     const regLabel = document.getElementById('registered-char-label');
     if (regLabel) {
-        regLabel.innerText = `未ロック (変更可)`;
+        regLabel.innerText = `新キャラ作成・変更可能`;
         regLabel.style.color = '#7bed9f';
     }
-    document.getElementById('reset-avatar-btn').style.display = 'none';
     const previewBtn = document.getElementById('btn-apply-preview');
     const lockBtn = document.getElementById('btn-lock-register');
     if (previewBtn) previewBtn.disabled = false;
     if (lockBtn) {
-        lockBtn.innerText = `🔒 このオリキャラで確定・本登録する（1人1体限定）`;
+        lockBtn.innerText = `🚀 このオリキャラで出撃登録する（負けるまで変更不可！）`;
         lockBtn.disabled = false;
     }
-    if (player.vrm) {
-        player.animPivot.remove(player.vrm.scene);
-        VRMUtils.deepDispose(player.vrm.scene);
-        player.vrm = null;
+}
+
+/**
+ * 自分を倒した敵（CPU/ゴースト）のAIガンビット＆ステータス配分を1タップでコピーしてスタジオを開く
+ */
+function copyEnemyBuildAndOpenStudio() {
+    unlockCharacterOnDefeat();
+    const boss = cpu.bossInfo || CPU_BOSS_TYPES[0];
+    const presetSliders = boss.presetSliders || { atk: 24, range: 24, stun: 24, atkspd: 14, spd: 14 };
+    const presetGambits = boss.presetGambits || [
+        { cond: "sp_50", act: "ult_ex" },
+        { cond: "enemy_stun", act: "skill_arts" },
+        { cond: "always", act: "atk_rush" }
+    ];
+
+    document.getElementById('sl-atk').value = presetSliders.atk;
+    document.getElementById('sl-range').value = presetSliders.range;
+    document.getElementById('sl-stun').value = presetSliders.stun;
+    document.getElementById('sl-atkspd').value = presetSliders.atkspd;
+    document.getElementById('sl-spd').value = presetSliders.spd;
+
+    if (presetGambits[0]) {
+        document.getElementById('ai-cond-1').value = presetGambits[0].cond;
+        document.getElementById('ai-act-1').value = presetGambits[0].act;
     }
-    if (player.customGlb) {
-        player.animPivot.remove(player.customGlb);
-        player.customGlb = null;
+    if (presetGambits[1]) {
+        document.getElementById('ai-cond-2').value = presetGambits[1].cond;
+        document.getElementById('ai-act-2').value = presetGambits[1].act;
     }
-    player.isVrm = false;
-    rebuildPlayerModelFromDesign();
+    if (presetGambits[2]) {
+        document.getElementById('ai-cond-3').value = presetGambits[2].cond;
+        document.getElementById('ai-act-3').value = presetGambits[2].act;
+    }
+
+    document.getElementById('cr-name').value = `${boss.name.split('・')[0]}継承者`;
+    if (studioSyncSlidersFn) studioSyncSlidersFn();
+
+    document.getElementById('result-modal').style.display = 'none';
     resetGame();
-    showAnnouncement("登録ロックを解除し、0連勝にリセットしました", "#7bed9f");
+    document.getElementById('creator-modal').style.display = 'flex';
+    showAnnouncement(`⚡ 強敵「${boss.name}」のAI＆ステ構成をコピーしました！`, "#00f2fe");
 }
 
 function updatePlayerSpecHud() {
     const specEl = document.getElementById('player-spec-tag');
-    if (!specEl) return;
-    specEl.innerText = `⚔️ATK:${player.atkScale.toFixed(2)}x | 📏範囲:${player.attackRange.toFixed(1)}m | 💫ひるみ:${player.stunPower.toFixed(2)}x | ⚡攻速:${player.atkSpeed.toFixed(2)}x`;
+    if (specEl) {
+        specEl.innerText = `⚔️ATK:${player.atkScale.toFixed(2)}x | 📏範囲:${player.attackRange.toFixed(1)}m | 💫崩し:${player.stunPower.toFixed(2)}x | ⚡攻速:${player.atkSpeed.toFixed(2)}x`;
+    }
+    const archEl = document.getElementById('player-archetype-badge');
+    if (archEl) {
+        const info = ARCHETYPE_INFO[player.archetype] || ARCHETYPE_INFO.speed_assassin;
+        archEl.innerText = info.label;
+        archEl.style.color = info.color;
+    }
 }
 
 function handleExternalFileImport(file) {
@@ -1570,6 +1914,9 @@ function spawnAfterimageGhost(entity, colorHex = 0x00f2fe) {
 function addCombo(hits, damage) {
     comboHits += hits;
     comboDamage += damage;
+    if (comboHits > battleStats.maxCombo) {
+        battleStats.maxCombo = comboHits;
+    }
 
     const rightDisp = document.getElementById('combo-display');
     const leftDisp = document.getElementById('combo-display-left');
@@ -1596,7 +1943,6 @@ function performPlayerAttack(subType = "rush") {
     if (!isGameActive) return;
     if (player.state === "special" || player.state === "down") return;
 
-    // 攻撃速度パラメータ（player.atkSpeed）に応じてコンボキャンセル受付が速くなる！
     const cancelWindow = 0.16 / player.atkSpeed;
     if ((player.state === "attack" || player.state === "skill") && player.stateTimer > cancelWindow) return;
 
@@ -1612,7 +1958,6 @@ function performPlayerAttack(subType = "rush") {
     const dist = toCpu.length();
     player.rotationY = Math.atan2(toCpu.x, toCpu.z);
 
-    // 踏み込み移動と足元砂煙
     const lunge = subType === "launch" ? 7.5 : (subType === "wide" ? 6.0 : 5.0);
     player.velocity.copy(toCpu.clone().normalize().multiplyScalar(lunge));
     spawnFootstepDust(player.position, 1.5);
@@ -1620,22 +1965,20 @@ function performPlayerAttack(subType = "rush") {
     const pal = getVfxPalette();
     const rangeRatio = player.attackRange / 3.1;
 
-    // 魔導シューター型の場合は遠距離魔弾を発射（画像2右上の魔法使いバトル再現）
     if (player.motionType === "magic_shooter") {
         spawnMagicProjectile(player.position, toCpu.clone().normalize(), pal.main, subType);
     }
 
     spawnCrescentSlash(player.position, cpu.position, subType === "launch" ? pal.sub : pal.main, player.comboStep, rangeRatio);
 
-    // 実効リーチ判定（wideは1.15倍、launchは1.05倍）
     const effectiveRange = player.attackRange * (subType === "wide" ? 1.15 : (subType === "launch" ? 1.05 : 1.0));
     if (dist <= effectiveRange) {
         const rawDmg = subType === "launch" ? 95 : (subType === "wide" ? 68 : 46);
         const isFinisher = player.comboStep === 4 || subType === "launch";
-        let finalDmg = Math.round(rawDmg * player.atkScale * (1 + comboHits * 0.03));
+        const archMult = getArchetypeMultiplier(player.archetype, cpu.archetype);
+        let finalDmg = Math.round(rawDmg * player.atkScale * archMult * (1 + comboHits * 0.03));
 
-        // ガード崩し＆ひるみ（Hit-Stun）計算
-        const poiseDamage = (subType === "launch" ? 48 : (subType === "wide" ? 30 : 22)) * player.stunPower;
+        const poiseDamage = (subType === "launch" ? 48 : (subType === "wide" ? 30 : 22)) * player.stunPower * archMult;
         cpu.poise = Math.max(0, cpu.poise - poiseDamage);
 
         if (cpu.isGuarding && subType !== "launch" && cpu.poise > 0) {
@@ -1643,31 +1986,29 @@ function performPlayerAttack(subType = "rush") {
             spawnHitSparks(cpu.position, 0x70a1ff, 18);
             spawnDamageNumber(cpu.position.x, cpu.position.y + cpu.airY, cpu.position.z, finalDmg, "guard", "GUARD");
         } else {
-            // ガードクラッシュ or クリーンヒット ➔ 敵が「ひるむ（Hit-Stun）」！
             cpu.isGuarding = false;
             const stunDuration = (subType === "launch" ? 0.85 : 0.52) * player.stunPower;
             cpu.stunTimer = stunDuration;
             cpu.aiTimer = Math.max(cpu.aiTimer, stunDuration + 0.15);
+            battleStats.stunsInflicted++;
 
             if (subType === "launch" || (player.comboStep === 4 && player.airY <= 0.1)) {
-                // 🗡️ 打ち上げ（Air Launch）または空中コンボ！
                 cpu.state = "launched";
                 cpu.stateDuration = stunDuration;
                 cpu.stateTimer = stunDuration;
                 cpu.airVelY = 7.8;
                 cpu.velocity.add(toCpu.clone().normalize().multiplyScalar(3.5));
                 spawnGroundSlamVFX(cpu.position, pal.sub, 1.1);
-                spawnDamageNumber(cpu.position.x, cpu.position.y + cpu.airY, cpu.position.z, finalDmg, "crit", "LAUNCH!");
+                spawnDamageNumber(cpu.position.x, cpu.position.y + cpu.airY, cpu.position.z, finalDmg, "crit", archMult > 1 ? "WEAK! LAUNCH!" : "LAUNCH!");
             } else {
-                // ⚡ のけぞりひるみ（Flinch / Stun）で敵の攻撃を中断させコンボ継続！
                 cpu.state = "stunned";
                 cpu.stateDuration = stunDuration;
                 cpu.stateTimer = stunDuration;
                 if (cpu.airY > 0.1) {
-                    cpu.airVelY = Math.max(cpu.airVelY, 2.8); // 空中お手玉（Juggle）維持！
+                    cpu.airVelY = Math.max(cpu.airVelY, 2.8);
                 }
                 cpu.velocity.add(toCpu.clone().normalize().multiplyScalar(2.4));
-                spawnDamageNumber(cpu.position.x, cpu.position.y + cpu.airY, cpu.position.z, finalDmg, isFinisher ? "crit" : "stun", comboHits >= 2 ? "STUN!" : "");
+                spawnDamageNumber(cpu.position.x, cpu.position.y + cpu.airY, cpu.position.z, finalDmg, isFinisher ? "crit" : "stun", archMult > 1 ? "相性有利!" : (comboHits >= 2 ? "STUN!" : ""));
             }
 
             cameraShakeIntensity = isFinisher ? 0.38 : 0.16;
@@ -1683,7 +2024,7 @@ function performPlayerAttack(subType = "rush") {
 }
 
 /**
- * 魔導シューター型・遠距離ホーミング魔弾 (画像2右上の魔法使いレーザー＆魔弾)
+ * 魔導シューター型・遠距離ホーミング魔弾
  */
 function spawnMagicProjectile(startPos, dir, colorHex, subType) {
     const orbGeo = new THREE.OctahedronGeometry(subType === "launch" ? 0.38 : 0.24, 1);
@@ -1703,17 +2044,17 @@ function spawnMagicProjectile(startPos, dir, colorHex, subType) {
 
 /**
  * 🔥 固有スキル技 (SKILLボタン / O・Fキー / SP 20消費)
- * 通常攻撃からキャンセルして繋がる3連ヒット属性スキル！
  */
 function performSkillArts() {
     if (!isGameActive) return;
     if (player.sp < 20) {
-        showAnnouncement("SP 20% 必要です！", "#ff4757");
+        if (!isAutoBattle) showAnnouncement("SP 20% 必要です！", "#ff4757");
         return;
     }
     if (player.state === "special" || player.state === "down") return;
 
     player.sp -= 20;
+    battleStats.skillsUsed++;
     player.state = "skill";
     player.stateDuration = 0.62 / player.atkSpeed;
     player.stateTimer = player.stateDuration;
@@ -1727,15 +2068,16 @@ function performSkillArts() {
     spawnGroundSlamVFX(player.position, pal.main, 1.2);
     spawnCrescentSlash(player.position, cpu.position, pal.main, 2, (player.attackRange / 3.1) * 1.35);
 
+    const archMult = getArchetypeMultiplier(player.archetype, cpu.archetype);
     if (dist <= player.attackRange * 1.45) {
-        // 3連続ヒット属性バースト！
         for (let i = 0; i < 3; i++) {
             setTimeout(() => {
                 if (!isGameActive) return;
-                const hitDmg = Math.round(52 * player.atkScale);
+                const hitDmg = Math.round(52 * player.atkScale * archMult);
                 cpu.state = "stunned";
                 cpu.stunTimer = 0.65 * player.stunPower;
                 cpu.stateTimer = cpu.stunTimer;
+                battleStats.stunsInflicted++;
                 if (i === 2) cpu.airVelY = 5.5;
                 spawnHitSparks(cpu.position, i % 2 === 0 ? pal.main : pal.sub, 32);
                 spawnDamageNumber(cpu.position.x, cpu.position.y + cpu.airY, cpu.position.z, hitDmg, "crit", "SKILL!");
@@ -1754,12 +2096,13 @@ function performSkillArts() {
 function performPlayerSpecial() {
     if (!isGameActive) return;
     if (player.sp < 50) {
-        showAnnouncement("SP 50% 必要です！", "#ff4757");
+        if (!isAutoBattle) showAnnouncement("SP 50% 必要です！", "#ff4757");
         return;
     }
     if (player.state === "special" || player.state === "down") return;
 
     player.sp -= 50;
+    battleStats.skillsUsed++;
     updateGauges();
 
     player.state = "special";
@@ -1780,18 +2123,19 @@ function performPlayerSpecial() {
     document.getElementById('cutin-skill').innerText = player.skillName;
     cutin.classList.add('active');
 
+    const archMult = getArchetypeMultiplier(player.archetype, cpu.archetype);
+
     setTimeout(() => {
         cutin.classList.remove('active');
         cinematicCameraMode = "action_wide";
 
-        // 5連撃の超ド派手属性フィニッシュ
         spawnGroundSlamVFX(cpu.position, pal.main, 2.2);
         spawnGroundSlamVFX(cpu.position, pal.sub, 1.6);
 
         for (let i = 0; i < 5; i++) {
             setTimeout(() => {
                 if (!isGameActive) return;
-                const partDmg = Math.round(78 * player.atkScale);
+                const partDmg = Math.round(78 * player.atkScale * archMult);
                 spawnHitSparks(cpu.position, i % 2 === 0 ? pal.main : pal.sub, 45);
                 spawnDamageNumber(cpu.position.x, cpu.position.y + cpu.airY, cpu.position.z, partDmg, "crit", i === 4 ? "FINISH!!" : "EX!");
                 applyDamage('cpu', partDmg);
@@ -1850,11 +2194,13 @@ function performPlayerJump() {
 }
 
 // ========================================================
-// 11. ダメージ ＆ ラウンド進行管理
+// 11. ダメージ ＆ ラウンド進行管理（5連勝ごとの生存報告 ＆ 敗北時の名誉引退）
 // ========================================================
 function applyDamage(target, amount) {
     if (target === 'cpu') {
-        cpu.hp = Math.max(0, cpu.hp - amount);
+        const dealt = Math.min(cpu.hp, Math.round(amount));
+        battleStats.damageDealt += dealt;
+        cpu.hp = Math.max(0, cpu.hp - dealt);
         updateGauges();
         if (cpu.hp <= 0 && isGameActive) {
             handleVictory();
@@ -1875,6 +2221,7 @@ function applyDamage(target, amount) {
             player.stateDuration = 0.34;
             player.stateTimer = 0.34;
         }
+        battleStats.damageTaken += finalDmg;
         player.hp = Math.max(0, player.hp - finalDmg);
         updateGauges();
         if (player.hp <= 0 && isGameActive) {
@@ -1920,6 +2267,11 @@ function handleVictory() {
     spawnGroundSlamVFX(cpu.position, 0xffd32a, 2.0);
     showAnnouncement("K.O. !! 🏆 ROUND CLEAR!", "#ffd32a");
 
+    // 1勝目達成時点で、未ロックなら自動的にサバイバル出撃ロック（is_active = true）を有効化
+    if (!player.is_active) {
+        lockCustomCharacterSlot(player.design.name);
+    }
+
     currentWins++;
     document.getElementById('current-wins').innerText = currentWins;
     document.getElementById('round-num-val').innerText = currentWins + 1;
@@ -1930,7 +2282,17 @@ function handleVictory() {
         document.getElementById('high-score').innerText = highScore;
     }
 
-    setTimeout(() => spawnNextCpu(), 2000);
+    // 5連勝ごと（5, 10, 15...連勝）に「生存報告（マウント）ポップアップ」を表示！
+    if (currentWins > 0 && currentWins % 5 === 0) {
+        setTimeout(() => {
+            document.getElementById('milestone-wins-num').innerText = currentWins;
+            document.getElementById('milestone-char-desc').innerText =
+                `愛機「${player.design.name}」(${ARCHETYPE_INFO[player.archetype]?.label || 'カスタム型'}) が無敗で ${currentWins} 連勝を突破！SNSに生存報告して挑戦者を募ろう！`;
+            document.getElementById('milestone-modal').style.display = 'flex';
+        }, 1600);
+    } else {
+        setTimeout(() => spawnNextCpu(), 2000);
+    }
 }
 
 function handleGameOver() {
@@ -1938,7 +2300,7 @@ function handleGameOver() {
     player.state = "down";
     player.stateDuration = 2.0;
     player.stateTimer = 2.0;
-    showAnnouncement("YOU LOSE... 💀", "#ff4757");
+    showAnnouncement("DEFEATED... 💀 名誉の引退", "#ff4757");
 
     if (currentWins > highScore) {
         highScore = currentWins;
@@ -1946,16 +2308,54 @@ function handleGameOver() {
         document.getElementById('high-score').innerText = highScore;
     }
 
+    // 【重要】敗北した瞬間のみ is_active = false となり、キャラ変更ロックが解除される！
+    unlockCharacterOnDefeat();
+
+    const boss = cpu.bossInfo || CPU_BOSS_TYPES[0];
+    const epitaph = `【引退】「${player.design.name}」、強敵「${boss.name}」の前に散る。通算 ${currentWins} 連勝。我が戦いに悔いなし！`;
+
+    // 敗因アナリティクス診断メッセージ作成
+    const enemyArchInfo = ARCHETYPE_INFO[cpu.archetype] || ARCHETYPE_INFO.one_shot_buster;
+    const counterArchKey = Object.keys(ARCHETYPE_INFO).find(k => ARCHETYPE_INFO[k].beats === cpu.archetype) || "speed_assassin";
+    const counterArchInfo = ARCHETYPE_INFO[counterArchKey];
+
+    const adviceHtml =
+        `🔍 <strong>敗因レポート:</strong> 強敵「<strong>${boss.name}</strong>」は <strong>${enemyArchInfo.label}</strong> でした。<br>` +
+        `💡 <strong>次回対策:</strong> 3すくみで有利な「<strong>${counterArchInfo.label}</strong>」にビルド変更するか、下のボタンで敵のAI＆ステータス構成を丸ごとコピーしてリベンジしましょう！`;
+
     setTimeout(() => {
+        document.getElementById('retirement-epitaph').innerText = epitaph;
         document.getElementById('modal-wins').innerText = currentWins;
         document.getElementById('modal-high-score').innerText = highScore;
+        document.getElementById('an-dmg-dealt').innerText = battleStats.damageDealt.toLocaleString();
+        document.getElementById('an-dmg-taken').innerText = battleStats.damageTaken.toLocaleString();
+        document.getElementById('an-stuns').innerText = `${battleStats.stunsInflicted}回 (最大${battleStats.maxCombo}Hit)`;
+        document.getElementById('defeat-advice-box').innerHTML = adviceHtml;
         document.getElementById('result-modal').style.display = 'flex';
-    }, 1400);
+    }, 1350);
 }
 
 function spawnNextCpu() {
-    const boss = CPU_BOSS_TYPES[currentWins % CPU_BOSS_TYPES.length];
+    let boss = CPU_BOSS_TYPES[currentWins % CPU_BOSS_TYPES.length];
+
+    // URLパラメータ (?ghost=...) のSNS挑戦状ゴーストが乱入している場合（初戦）
+    if (challengedGhostData && currentWins === 0) {
+        boss = {
+            ...CPU_BOSS_TYPES[0],
+            name: `${challengedGhostData.name} (挑戦状ゴースト)`,
+            ghostOwner: `🔥 ${challengedGhostData.streak || 5}連勝王者`,
+            style: ARCHETYPE_INFO[challengedGhostData.arch]?.label || "💥 SNS挑戦者ゴースト",
+            archetype: challengedGhostData.arch || "one_shot_buster",
+            skinColor: 0x6c5ce7,
+            armorColor: 0x2d3436,
+            accentColor: 0x00f2fe,
+            presetSliders: challengedGhostData.sliders || CPU_BOSS_TYPES[0].presetSliders,
+            presetGambits: challengedGhostData.gambits || CPU_BOSS_TYPES[0].presetGambits
+        };
+    }
+
     cpu.bossInfo = boss;
+    cpu.archetype = boss.archetype || "one_shot_buster";
     cpu.maxHp = Math.round(1000 * Math.pow(1.08, currentWins));
     cpu.hp = cpu.maxHp;
     cpu.maxPoise = Math.round(boss.poiseMax * Math.pow(1.04, currentWins));
@@ -1976,6 +2376,11 @@ function spawnNextCpu() {
         player.hp = Math.min(player.maxHp, Math.round(player.hp + player.maxHp * 0.35));
     } else {
         player.hp = player.maxHp;
+        battleStats.damageDealt = 0;
+        battleStats.damageTaken = 0;
+        battleStats.stunsInflicted = 0;
+        battleStats.maxCombo = 0;
+        battleStats.skillsUsed = 0;
     }
     player.sp = Math.min(player.maxSp, player.sp + 30);
     player.position.set(-3.8, 0, 0.8);
@@ -1985,33 +2390,363 @@ function spawnNextCpu() {
     player.state = "idle";
 
     document.getElementById('cpu-name').innerText = `Lv.${currentWins + 1} ${boss.name}`;
-    document.getElementById('cpu-type').innerText = boss.style;
+    document.getElementById('cpu-type').innerText = `${boss.ghostOwner || '@Ghost'} | ${boss.style}`;
+
+    const cpuArchEl = document.getElementById('cpu-archetype-badge');
+    if (cpuArchEl) {
+        const info = ARCHETYPE_INFO[cpu.archetype] || ARCHETYPE_INFO.one_shot_buster;
+        cpuArchEl.innerText = info.label;
+        cpuArchEl.style.color = info.color;
+    }
 
     setupCpuBossModel(boss);
     spawnGroundSlamVFX(cpu.position, boss.accentColor, 1.2);
     updateGauges();
     isGameActive = true;
-    showAnnouncement(`ROUND ${currentWins + 1} - FIGHT!`, "#00f2fe");
+    showAnnouncement(
+        challengedGhostData && currentWins === 0
+            ? `🔥 SNS挑戦状ゴースト「${challengedGhostData.name}」乱入！`
+            : `ROUND ${currentWins + 1} - FIGHT!`,
+        "#00f2fe"
+    );
 }
 
 function resetGame() {
     currentWins = 0;
     document.getElementById('current-wins').innerText = currentWins;
     document.getElementById('result-modal').style.display = 'none';
+    document.getElementById('milestone-modal').style.display = 'none';
     player.hp = player.maxHp;
     player.sp = 60;
     spawnNextCpu();
 }
 
-function shareOnX() {
-    const text = `⚔️【3D自作キャラバトル】\nオリキャラ「${player.design.name}」(ATK:${player.atkScale}x / 範囲:${player.attackRange}m)で 🔥【 ${currentWins} 連勝 】🔥 を達成！\n\n#自作キャラバトル #アンリミテッドコロシアム`;
-    const xUrl = `https://twitter.com/intent/tweet?text=${encodeURIComponent(text)}&url=${encodeURIComponent(window.location.href)}`;
+/**
+ * X (旧Twitter) への「生存報告マウント」または「名誉の引退ポスト」共有（挑戦状URLつき）
+ */
+function shareOnX(mode = "retired") {
+    const challengeUrl = buildChallengeUrl();
+    const archLabel = ARCHETYPE_INFO[player.archetype]?.label || "⚡カスタム型";
+    let text = "";
+
+    if (mode === "survival") {
+        text =
+            `🔥【生存報告】現在 ${currentWins} 連勝中！！\n` +
+            `愛機「${player.design.name}」(${archLabel} / ATK:${player.atkScale}x / 範囲:${player.attackRange}m) が無敗でサバイバル継続中！\n` +
+            `「誰かこいつを止めてみろ！」👇このリンクから直接対戦！\n\n` +
+            `#自作キャラバトル #アンリミテッドコロシアム`;
+    } else {
+        const bossName = cpu.bossInfo?.name || "強敵";
+        text =
+            `⚔️【引退】「${player.design.name}」、強敵「${bossName}」の前に散る。\n` +
+            `通算 🔥【 ${currentWins} 連勝 】🔥 (${archLabel})\n` +
+            `我が戦いに悔いなし！👇このキャラのゴーストに挑戦する\n\n` +
+            `#自作キャラバトル #アンリミテッドコロシアム`;
+    }
+
+    const xUrl = `https://twitter.com/intent/tweet?text=${encodeURIComponent(text)}&url=${encodeURIComponent(challengeUrl)}`;
     window.open(xUrl, '_blank');
 }
 
 // ========================================================
-// 12. CPU AI（ひるみ・打ち上げ中は行動不能！）＆ 全身モーション補間
+// 11.5 🖼️ 公式額縁入り「連勝認定証＆キャラカード」Canvas画像ジェネレーター
 // ========================================================
+const GAMBIT_COND_LABELS = {
+    sp_50: "SP50%以上",
+    sp_20: "SP20%以上",
+    enemy_stun: "敵がひるみ/浮き中",
+    enemy_attack: "敵が攻撃モーション中",
+    enemy_guard: "敵がガード固め中",
+    hp_low: "自分HP35%以下",
+    dist_near: "近距離間合い内",
+    dist_far: "遠距離間合い外",
+    always: "常時(デフォルト)"
+};
+
+const GAMBIT_ACT_LABELS = {
+    ult_ex: "🌟必殺奥義EX",
+    skill_arts: "🔥スキル技",
+    atk_launch: "🗡️打ち上げ強攻撃",
+    atk_wide: "⚔️広範囲なぎ払い",
+    atk_rush: "⚡高速4連撃",
+    guard_counter: "🛡️ガード固め",
+    dodge_step: "💨無敵ステップ",
+    approach: "🏃高速接近"
+};
+
+function renderCertificateCanvas(statusType = "SURVIVAL") {
+    const canvas = document.getElementById('certificate-canvas');
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    const W = canvas.width;   // 960
+    const H = canvas.height;  // 540
+
+    // 1. リッチダーク背景グラデーション
+    const bgGrad = ctx.createLinearGradient(0, 0, W, H);
+    bgGrad.addColorStop(0, '#070b19');
+    bgGrad.addColorStop(0.5, '#101d38');
+    bgGrad.addColorStop(1, '#090d1a');
+    ctx.fillStyle = bgGrad;
+    ctx.fillRect(0, 0, W, H);
+
+    // 2. Blender 5.2 Cycles バトルショーケース画像を右半分背景にブレンド描画
+    if (cyclesImages.showcase) {
+        ctx.save();
+        ctx.globalAlpha = 0.34;
+        ctx.drawImage(cyclesImages.showcase, W * 0.32, 0, W * 0.68, H);
+        ctx.restore();
+    }
+
+    // 3. 豪華な二重黄金額縁フレーム
+    ctx.strokeStyle = '#ffd32a';
+    ctx.lineWidth = 5;
+    ctx.strokeRect(16, 16, W - 32, H - 32);
+    ctx.strokeStyle = 'rgba(0, 242, 254, 0.55)';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(26, 26, W - 52, H - 52);
+
+    // 四隅のコーナーオーナメント
+    const corners = [[16, 16], [W - 36, 16], [16, H - 36], [W - 36, H - 36]];
+    ctx.fillStyle = '#ffd32a';
+    corners.forEach(([cx, cy]) => ctx.fillRect(cx, cy, 20, 20));
+
+    // 4. ヘッダー称号帯
+    ctx.fillStyle = '#ffd32a';
+    ctx.font = '900 18px "M PLUS Rounded 1c", sans-serif';
+    ctx.fillText('👑 UNLIMITED COLOSSEUM — OFFICIAL SURVIVAL RECORD (BLENDER 5.2 CYCLES)', 46, 62);
+
+    // ステータスバッジ（生存中 or 名誉引退）
+    const isRetired = statusType === "RETIRED";
+    ctx.fillStyle = isRetired ? '#eb2f06' : '#00b894';
+    ctx.fillRect(46, 78, 220, 34);
+    ctx.fillStyle = '#ffffff';
+    ctx.font = '900 16px "M PLUS Rounded 1c", sans-serif';
+    ctx.fillText(isRetired ? '📜 【名誉引退・最終戦績証】' : '🔥 【無敗サバイバル生存証】', 58, 101);
+
+    // 5. キャラクター名 ＆ 3すくみタイプ
+    ctx.fillStyle = '#ffffff';
+    ctx.font = '900 42px "M PLUS Rounded 1c", sans-serif';
+    ctx.fillText(player.design.name, 46, 162);
+
+    const archInfo = ARCHETYPE_INFO[player.archetype] || ARCHETYPE_INFO.speed_assassin;
+    ctx.fillStyle = archInfo.color;
+    ctx.font = '800 20px "M PLUS Rounded 1c", sans-serif';
+    ctx.fillText(`${archInfo.label}  |  必殺奥義: ${player.skillName}`, 46, 196);
+
+    // 6. 大迫力の連勝記録ボックス
+    ctx.fillStyle = 'rgba(255, 211, 42, 0.14)';
+    ctx.strokeStyle = '#ffd32a';
+    ctx.lineWidth = 2.5;
+    ctx.fillRect(46, 218, 430, 108);
+    ctx.strokeRect(46, 218, 430, 108);
+
+    ctx.fillStyle = '#ffd32a';
+    ctx.font = '900 22px "M PLUS Rounded 1c", sans-serif';
+    ctx.fillText(isRetired ? '通算サバイバル連勝記録' : '現在継続中の連勝記録', 66, 252);
+
+    ctx.fillStyle = '#ffffff';
+    ctx.font = '900 58px "Cinzel", "M PLUS Rounded 1c", sans-serif';
+    ctx.fillText(`${currentWins} WIN STREAK`, 66, 310);
+
+    // 7. パラメータ配分バー (100PT)
+    const statRows = [
+        { label: `⚔️ 攻撃力 (${player.atkScale.toFixed(2)}x)`, ratio: (player.atkScale - 0.85) / 0.55, color: '#ff6b6b' },
+        { label: `📏 技範囲 (${player.attackRange.toFixed(1)}m)`, ratio: (player.attackRange - 2.4) / 2.1, color: '#00f2fe' },
+        { label: `💫 崩し力 (${player.stunPower.toFixed(2)}x)`, ratio: (player.stunPower - 0.80) / 0.70, color: '#ffd32a' },
+        { label: `⚡ 攻撃速度 (${player.atkSpeed.toFixed(2)}x)`, ratio: (player.atkSpeed - 0.85) / 0.50, color: '#7bed9f' },
+        { label: `👟 移動速度 (${player.speed.toFixed(1)})`, ratio: (player.speed - 5.2) / 2.8, color: '#a29bfe' }
+    ];
+
+    ctx.font = '800 15px "M PLUS Rounded 1c", sans-serif';
+    statRows.forEach((row, idx) => {
+        const y = 356 + idx * 30;
+        ctx.fillStyle = '#e2e8f0';
+        ctx.fillText(row.label, 46, y);
+
+        ctx.fillStyle = 'rgba(255,255,255,0.12)';
+        ctx.fillRect(235, y - 13, 240, 14);
+        ctx.fillStyle = row.color;
+        ctx.fillRect(235, y - 13, Math.max(12, Math.min(1, row.ratio) * 240), 14);
+    });
+
+    // 8. 右側：Blender Cycles キャラクターポートレート ＆ AI作戦ガンビット一覧
+    if (cyclesImages.heroPortrait) {
+        ctx.save();
+        ctx.strokeStyle = '#00f2fe';
+        ctx.lineWidth = 3;
+        ctx.strokeRect(520, 68, 175, 175);
+        ctx.drawImage(cyclesImages.heroPortrait, 520, 68, 175, 175);
+        ctx.restore();
+    }
+    if (cyclesImages.oniPortrait) {
+        ctx.save();
+        ctx.strokeStyle = '#ff4757';
+        ctx.lineWidth = 3;
+        ctx.strokeRect(725, 68, 175, 175);
+        ctx.drawImage(cyclesImages.oniPortrait, 725, 68, 175, 175);
+        ctx.restore();
+    }
+
+    ctx.fillStyle = '#00f2fe';
+    ctx.font = '900 18px "M PLUS Rounded 1c", sans-serif';
+    ctx.fillText('🧠 登録AI作戦ガンビット (AUTO LOGIC)', 520, 276);
+
+    player.gambits.forEach((g, i) => {
+        const gy = 310 + i * 44;
+        ctx.fillStyle = 'rgba(15, 23, 42, 0.85)';
+        ctx.strokeStyle = 'rgba(0, 242, 254, 0.45)';
+        ctx.lineWidth = 1.5;
+        ctx.fillRect(520, gy - 24, 385, 34);
+        ctx.strokeRect(520, gy - 24, 385, 34);
+
+        ctx.fillStyle = '#ffd32a';
+        ctx.font = '800 14px "M PLUS Rounded 1c", sans-serif';
+        const cText = GAMBIT_COND_LABELS[g.cond] || g.cond;
+        const aText = GAMBIT_ACT_LABELS[g.act] || g.act;
+        ctx.fillText(`優先${i + 1}: [IF ${cText}] ➔ [${aText}]`, 532, gy - 2);
+    });
+
+    // 9. フッター刻印
+    ctx.fillStyle = '#94a3b8';
+    ctx.font = '700 13px "M PLUS Rounded 1c", sans-serif';
+    const dateStr = new Date().toLocaleDateString('ja-JP');
+    ctx.fillText(`総与ダメージ: ${battleStats.damageDealt.toLocaleString()} | 最大コンボ: ${battleStats.maxCombo} HIT | 発行日: ${dateStr}`, 520, 488);
+}
+
+function openCertificateModal(statusType = "SURVIVAL") {
+    renderCertificateCanvas(statusType);
+    document.getElementById('cert-modal').style.display = 'flex';
+}
+
+function downloadCertificatePng() {
+    const canvas = document.getElementById('certificate-canvas');
+    if (!canvas) return;
+    const link = document.createElement('a');
+    link.download = `colosseum_${player.design.name}_${currentWins}wins.png`;
+    link.href = canvas.toDataURL('image/png');
+    link.click();
+}
+
+// ========================================================
+// 12. プレイヤー自動AI（IF+THEN ガンビット）＆ CPU AI ＆ 全身モーション補間
+// ========================================================
+function evaluateGambitCondition(condKey, dist) {
+    switch (condKey) {
+        case "sp_50":        return player.sp >= 50;
+        case "sp_20":        return player.sp >= 20;
+        case "enemy_stun":   return cpu.stunTimer > 0 || cpu.airY > 0.1 || cpu.state === "stunned" || cpu.state === "launched";
+        case "enemy_attack": return cpu.state === "attack";
+        case "enemy_guard":  return cpu.isGuarding;
+        case "hp_low":       return player.hp <= player.maxHp * 0.35;
+        case "dist_near":    return dist <= player.attackRange * 1.08;
+        case "dist_far":     return dist > player.attackRange * 1.08;
+        case "always":
+        default:             return true;
+    }
+}
+
+function executeGambitAction(actKey, dist, toCpu, dt) {
+    input.guard = false;
+    const dir = toCpu.clone().normalize();
+
+    if (actKey === "ult_ex") {
+        if (player.sp >= 50) {
+            if (dist <= player.specialRange) {
+                performPlayerSpecial();
+                return true;
+            } else {
+                player.velocity.addScaledVector(dir, player.speed * dt * 7.2);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    if (actKey === "skill_arts") {
+        if (player.sp >= 20) {
+            if (dist <= player.attackRange * 1.35) {
+                performSkillArts();
+                return true;
+            } else {
+                player.velocity.addScaledVector(dir, player.speed * dt * 7.2);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    if (actKey === "guard_counter") {
+        if (cpu.state === "attack" && dist < 3.6) {
+            input.guard = true;
+            return true;
+        }
+        if (dist <= player.attackRange * 1.05) {
+            performPlayerAttack("launch");
+            return true;
+        }
+    }
+
+    if (actKey === "dodge_step") {
+        if (player.sp >= 15) {
+            performPlayerDodge();
+            return true;
+        }
+        return false;
+    }
+
+    if (actKey === "approach") {
+        if (dist > player.attackRange * 0.82) {
+            player.velocity.addScaledVector(dir, player.speed * dt * 7.2);
+            return true;
+        }
+        performPlayerAttack("rush");
+        return true;
+    }
+
+    // 通常攻撃系 (atk_rush / atk_wide / atk_launch)
+    const subType = actKey === "atk_launch" ? "launch" : (actKey === "atk_wide" ? "wide" : "rush");
+    const reach = player.attackRange * (subType === "wide" ? 1.12 : 0.98);
+
+    if (dist > reach) {
+        player.velocity.addScaledVector(dir, player.speed * dt * 7.0);
+        return true;
+    } else {
+        performPlayerAttack(subType);
+        return true;
+    }
+}
+
+/**
+ * 3Dオート対戦（監督・軍師モード）: ユーザーが組んだ3つのガンビットを優先順に評価して自動戦闘！
+ */
+function updatePlayerAutoAI(dt) {
+    if (!isAutoBattle || !isGameActive) return false;
+    if (player.state === "special" || player.state === "down" || player.state === "damaged") return false;
+
+    // 手動キー入力が入っている間は手動操作を優先
+    if (Math.abs(input.moveX) > 0.05 || Math.abs(input.moveZ) > 0.05) return false;
+
+    const toCpu = new THREE.Vector3().subVectors(cpu.position, player.position);
+    const dist = toCpu.length();
+    player.rotationY = Math.atan2(toCpu.x, toCpu.z);
+
+    player.aiDecisionTimer -= dt;
+    if (player.aiDecisionTimer > 0 && player.state === "attack") return false;
+
+    for (let i = 0; i < player.gambits.length; i++) {
+        const g = player.gambits[i];
+        if (evaluateGambitCondition(g.cond, dist)) {
+            const prevVelSq = player.velocity.lengthSq();
+            const acted = executeGambitAction(g.act, dist, toCpu, dt);
+            if (acted) {
+                player.aiDecisionTimer = 0.08 / player.atkSpeed;
+                return player.velocity.lengthSq() > prevVelSq + 0.05;
+            }
+        }
+    }
+    return false;
+}
+
 function updateCpuAI(dt) {
     if (!isGameActive || cpu.state === "down") return;
 
@@ -2030,7 +2765,7 @@ function updateCpuAI(dt) {
     const dist = toPlayer.length();
     cpu.rotationY = Math.atan2(toPlayer.x, toPlayer.z);
 
-    const atkScale = Math.pow(1.05, currentWins);
+    const atkScale = Math.pow(1.05, currentWins) * getArchetypeMultiplier(cpu.archetype, player.archetype);
 
     if (cpu.aiTimer <= 0) {
         cpu.aiTimer = Math.max(0.28, 0.62 - currentWins * 0.02) + Math.random() * 0.25;
@@ -2077,19 +2812,16 @@ function updateFullBodyMotion(entity, dt, isMoving) {
 
     if (entity.state === "attack" || entity.state === "skill") {
         if (entity.attackSubType === "launch" || entity.comboStep === 3) {
-            // 🗡️ 打ち上げ／サマーソルト斬り
             py += Math.sin(p * Math.PI) * 1.15;
             rx = -p * Math.PI * 2.0;
             rArmX = -2.4 + p * 3.1;
             lArmX = -1.8 + p * 2.5;
         } else if (entity.attackSubType === "wide" || entity.comboStep === 2) {
-            // ⚔️ 360度回転なぎ払い
             ry = p * Math.PI * 2.0;
             rx = 0.20;
             rArmX = -1.4; rArmZ = -1.1;
             lArmX = -1.2; lArmZ = 1.0;
         } else {
-            // ⚡ 高速踏み込み袈裟斬り・連撃
             const sw = p < 0.25 ? -p * 2.0 : (p - 0.25) * 1.35;
             rx = 0.26;
             torsoY = THREE.MathUtils.lerp(-0.75, 0.95, Math.max(0, sw));
@@ -2097,12 +2829,10 @@ function updateFullBodyMotion(entity, dt, isMoving) {
             lLegX = -0.55; rLegX = 0.55;
         }
     } else if (entity.state === "stunned") {
-        // 😵 ひるみ（のけぞり）モーション！
         rx = -0.55 * Math.sin(p * Math.PI);
         rz = Math.sin(t * 8.0) * 0.18;
         rArmX = -0.9; lArmX = -0.9;
     } else if (entity.state === "launched") {
-        // 💫 空中打ち上げキリギリス回転！
         rx = p * Math.PI * 2.0;
         rArmX = -1.4; lArmX = -1.4;
     } else if (entity.state === "down") {
@@ -2139,7 +2869,7 @@ function updateFullBodyMotion(entity, dt, isMoving) {
 }
 
 // ========================================================
-// 13. メインアニメーションループ
+// 13. メインアニメーションループ（Bloom合成 ＆ スマート観戦カメラ）
 // ========================================================
 function animate() {
     requestAnimationFrame(animate);
@@ -2153,7 +2883,8 @@ function animate() {
             camera.position.x += (Math.random() - 0.5) * cameraShakeIntensity * 0.5;
             camera.position.y += (Math.random() - 0.5) * cameraShakeIntensity * 0.5;
         }
-        renderer.render(scene, camera);
+        if (composer) composer.render();
+        else renderer.render(scene, camera);
         return;
     }
 
@@ -2164,7 +2895,6 @@ function animate() {
         if (slowMoTimer <= 0) isKoSlowMo = false;
     }
 
-    // ラウンドタイマー (99カウントダウン)
     if (isGameActive) {
         roundTimerAccum += dt;
         if (roundTimerAccum >= 1.0) {
@@ -2172,16 +2902,25 @@ function animate() {
             roundTimer = Math.max(0, roundTimer - 1);
             document.getElementById('round-timer-val').innerText = String(roundTimer).padStart(2, '0');
         }
-        player.sp = Math.min(player.maxSp, player.sp + 4.2 * dt);
+        player.sp = Math.min(player.maxSp, player.sp + 4.8 * dt);
         updateGauges();
     }
 
-    // プレイヤー周囲のキラキラオーラ更新 (画像1再現)
+    // プレイヤー周囲のキラキラオーラ更新
     playerAuraParticles.forEach(p => {
         p.angle += dt * p.speed;
         const y = ((p.heightOffset + elapsedTime * 0.9) % 1.65) + 0.15;
         p.mesh.position.set(Math.cos(p.angle) * p.radius, y + player.airY, Math.sin(p.angle) * p.radius);
         p.mesh.rotation.y += dt * 4;
+    });
+
+    // コロシアム全体の浮遊マナ粒子アニメーション
+    ambientSparkles.forEach(sp => {
+        sp.angle += dt * sp.speed * 0.4;
+        sp.mesh.position.x = Math.cos(sp.angle) * sp.radius;
+        sp.mesh.position.z = Math.sin(sp.angle) * sp.radius;
+        sp.mesh.position.y = sp.baseY + Math.sin(elapsedTime * 1.8 + sp.phase) * 0.35;
+        sp.mesh.rotation.y += dt * 2.5;
     });
 
     // 重力・空中物理（打ち上げ・ジャンプ）
@@ -2197,9 +2936,12 @@ function animate() {
         }
     });
 
-    // プレイヤー移動
+    // プレイヤー移動 ＆ オートバトルAIガンビット駆動
     let playerMoving = false;
     if (isGameActive && player.state !== "special" && player.state !== "down") {
+        const autoMoved = updatePlayerAutoAI(dt);
+        if (autoMoved) playerMoving = true;
+
         player.isGuarding = input.guard && player.state !== "attack";
         player.guardBarrierMesh.material.opacity = player.isGuarding ? 0.38 : 0.0;
 
@@ -2210,17 +2952,19 @@ function animate() {
             const moveVec = new THREE.Vector3().addScaledVector(camRight, input.moveX).addScaledVector(camForward, -input.moveZ).normalize();
             player.velocity.add(moveVec.multiplyScalar(player.speed * dt * 6.8));
 
-            dustTimer -= dt;
-            if (dustTimer <= 0 && player.airY <= 0.05) {
-                spawnFootstepDust(player.position, 1.1);
-                dustTimer = 0.11;
-            }
-
             if (input.lockOn) {
                 const toCpu = new THREE.Vector3().subVectors(cpu.position, player.position);
                 player.rotationY = Math.atan2(toCpu.x, toCpu.z);
             } else {
                 player.rotationY = Math.atan2(moveVec.x, moveVec.z);
+            }
+        }
+
+        if (playerMoving) {
+            dustTimer -= dt;
+            if (dustTimer <= 0 && player.airY <= 0.05) {
+                spawnFootstepDust(player.position, 1.1);
+                dustTimer = 0.11;
             }
         }
     }
@@ -2246,10 +2990,11 @@ function animate() {
         pr.life -= dt;
         pr.mesh.position.addScaledVector(pr.vel, dt);
         if (pr.mesh.position.distanceTo(cpu.position.clone().add(new THREE.Vector3(0, 1.1, 0))) < 1.35) {
-            const dmg = Math.round(54 * player.atkScale);
+            const dmg = Math.round(54 * player.atkScale * getArchetypeMultiplier(player.archetype, cpu.archetype));
             cpu.stunTimer = 0.48 * player.stunPower;
             cpu.state = "stunned";
             cpu.stateTimer = cpu.stunTimer;
+            battleStats.stunsInflicted++;
             spawnHitSparks(cpu.position, pr.colorHex, 28);
             spawnDamageNumber(cpu.position.x, cpu.position.y + cpu.airY, cpu.position.z, dmg, "stun", "MAGIC!");
             applyDamage('cpu', dmg);
@@ -2295,23 +3040,34 @@ function animate() {
         }
     }
 
-    // 画像1・2のアングルを再現する斜め後方TPSカメラ
+    // ダイナミックTPS＆スマート観戦カメラワーク
     const midPoint = new THREE.Vector3().addVectors(player.position, cpu.position).multiplyScalar(0.5);
     const toPlayerFromCpu = new THREE.Vector3().subVectors(player.position, cpu.position).normalize();
     const rightVec = new THREE.Vector3(-toPlayerFromCpu.z, 0, toPlayerFromCpu.x);
 
     let camTargetPos;
-    let lookTarget = new THREE.Vector3(midPoint.x, 1.25 + (player.airY + cpu.airY) * 0.3, midPoint.z);
+    let lookTarget = new THREE.Vector3(midPoint.x, 1.25 + (player.airY + cpu.airY) * 0.35, midPoint.z);
 
     if (cinematicCameraMode === "zoom_player") {
         const frontDir = new THREE.Vector3(Math.sin(player.rotationY), 0, Math.cos(player.rotationY));
         camTargetPos = player.position.clone().addScaledVector(frontDir, 2.3).add(new THREE.Vector3(0.7, 1.4, 0));
         lookTarget.copy(player.position).add(new THREE.Vector3(0, 1.3, 0));
         camera.position.lerp(camTargetPos, 0.22);
+    } else if (isCinematicSpectator) {
+        // 🎬 観戦カメラモード時はゆっくり周回しながらコンボ時にダイナミックズーム
+        const orbitAng = elapsedTime * 0.35;
+        const zoomDist = comboHits >= 3 || cpu.airY > 0.2 ? 5.2 : 7.0;
+        camTargetPos = new THREE.Vector3(
+            midPoint.x + Math.cos(orbitAng) * zoomDist,
+            2.3 + Math.sin(elapsedTime * 0.7) * 0.55,
+            midPoint.z + Math.sin(orbitAng) * zoomDist
+        );
+        camera.position.lerp(camTargetPos, 0.08);
     } else {
+        const dynamicZoom = comboHits >= 3 || cpu.airY > 0.25 ? 3.65 : 4.4;
         camTargetPos = player.position.clone()
-            .addScaledVector(toPlayerFromCpu, 4.4)
-            .addScaledVector(rightVec, -1.1)
+            .addScaledVector(toPlayerFromCpu, dynamicZoom)
+            .addScaledVector(rightVec, -1.15)
             .add(new THREE.Vector3(0, 2.75, 0));
         camera.position.lerp(camTargetPos, 0.11);
     }
@@ -2325,20 +3081,49 @@ function animate() {
     }
     camera.lookAt(lookTarget);
 
-    renderer.render(scene, camera);
+    if (composer) {
+        composer.render();
+    } else {
+        renderer.render(scene, camera);
+    }
 }
 
 function onResize() {
     const container = document.getElementById('three-canvas-container');
     if (!container || !renderer) return;
-    camera.aspect = container.clientWidth / container.clientHeight;
+    const w = container.clientWidth || window.innerWidth;
+    const h = container.clientHeight || window.innerHeight;
+    camera.aspect = w / h;
     camera.updateProjectionMatrix();
-    renderer.setSize(container.clientWidth, container.clientHeight);
+    renderer.setSize(w, h);
+    if (composer) composer.setSize(w, h);
 }
 
 // ========================================================
-// 14. 入力バインド（キーボード ＆ 左下ATTACK / 右下SKILL 4ボタンパッド）
+// 14. 入力バインド（監督バー ＆ キーボード ＆ 左下ATTACK / 右下SKILL パッド）
 // ========================================================
+function toggleAutoBattle() {
+    isAutoBattle = !isAutoBattle;
+    const btn = document.getElementById('btn-auto-toggle');
+    if (btn) {
+        btn.innerText = isAutoBattle ? '🤖 AUTO対戦: ON' : '🎮 手動操作: ON';
+        btn.classList.toggle('active', isAutoBattle);
+    }
+    showAnnouncement(
+        isAutoBattle ? '🤖 AUTO対戦 ON (登録AIガンビットで自動戦闘)' : '🎮 手動アクションモード ON',
+        isAutoBattle ? '#10b981' : '#ffd32a'
+    );
+}
+
+function toggleCinematicSpectator() {
+    isCinematicSpectator = !isCinematicSpectator;
+    document.body.classList.toggle('cinematic-spectator', isCinematicSpectator);
+    const btn = document.getElementById('btn-cinematic-mode');
+    if (btn) {
+        btn.innerText = isCinematicSpectator ? '🎬 観戦カメラ: ON (UI非表示)' : '🎬 観戦カメラ';
+    }
+}
+
 function setupInputs() {
     window.addEventListener('keydown', e => {
         if (document.activeElement && (document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'SELECT')) return;
@@ -2355,6 +3140,7 @@ function setupInputs() {
         if (k === 'k' || k === 'x') performPlayerSpecial();
         if (k === 'l' || k === 'shift') performPlayerDodge();
         if (k === 'v') performPlayerJump();
+        if (k === 'p') toggleAutoBattle();
         if (k === ' ') { input.guard = true; e.preventDefault(); }
         if (k === 'q') input.lockOn = !input.lockOn;
     });
@@ -2387,9 +3173,35 @@ function setupInputs() {
     bindPadBtn('btn-skl-dodge',  performPlayerDodge);
     bindPadBtn('btn-skl-jump',   performPlayerJump);
 
+    // 上部 監督・観戦コントロールバー
+    document.getElementById('btn-auto-toggle')?.addEventListener('click', toggleAutoBattle);
+    document.getElementById('btn-cinematic-mode')?.addEventListener('click', toggleCinematicSpectator);
+    document.getElementById('btn-live-brag')?.addEventListener('click', () => shareOnX('survival'));
+
+    // 5連勝ごとの生存報告モーダルボタン
+    document.getElementById('btn-milestone-share')?.addEventListener('click', () => shareOnX('survival'));
+    document.getElementById('btn-milestone-cert')?.addEventListener('click', () => openCertificateModal('SURVIVAL'));
+    document.getElementById('btn-milestone-continue')?.addEventListener('click', () => {
+        document.getElementById('milestone-modal').style.display = 'none';
+        spawnNextCpu();
+    });
+
+    // 敗北・引退モーダルボタン
+    document.getElementById('btn-share-x')?.addEventListener('click', () => shareOnX('retired'));
+    document.getElementById('btn-open-cert')?.addEventListener('click', () => openCertificateModal('RETIRED'));
+    document.getElementById('btn-copy-enemy')?.addEventListener('click', copyEnemyBuildAndOpenStudio);
+    document.getElementById('btn-retry')?.addEventListener('click', () => {
+        resetGame();
+        document.getElementById('creator-modal').style.display = 'flex';
+    });
+
+    // 額縁認定証モーダルボタン
+    document.getElementById('btn-download-cert')?.addEventListener('click', downloadCertificatePng);
+    document.getElementById('btn-close-cert')?.addEventListener('click', () => {
+        document.getElementById('cert-modal').style.display = 'none';
+    });
+
     setupTouchJoystick();
-    document.getElementById('btn-share-x').addEventListener('click', shareOnX);
-    document.getElementById('btn-retry').addEventListener('click', resetGame);
 }
 
 function setupTouchJoystick() {
@@ -2442,3 +3254,4 @@ document.addEventListener('DOMContentLoaded', () => {
     setupCreatorStudio();
     initScene();
 });
+

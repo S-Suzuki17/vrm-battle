@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>3D自作キャラバトル — アンリミテッド・コロシアム</title>
+    <title>3D自作キャラバトル — Cycles × オート＆非同期ゴースト闘技場</title>
     <link rel="stylesheet" href="style.css">
     <!-- Import Maps: Three.js & three-vrm -->
     <script type="importmap">
@@ -23,19 +23,25 @@
     <div class="viewport-container" id="drop-area">
         <div id="three-canvas-container"></div>
 
+        <!-- シネマティック観戦モード解除ヒント -->
+        <div class="cinematic-exit-pill" id="cinematic-exit-pill" style="display: none;">
+            🎬 シネマティック観戦モード中（クリック または Hキー でUI再表示）
+        </div>
+
         <!-- ========================================================
-             上部：アニメ調・斜め平行四辺形ゲージ HUD (画像1・2完全準拠)
+             上部：アニメ調・斜め平行四辺形ゲージ HUD (Cyclesポートレート＆非同期ゴースト表示)
              ======================================================== -->
-        <div class="unlimited-hud">
+        <div class="unlimited-hud" id="main-hud">
             <!-- 左上：PLAYER (自作) ユニット -->
             <div class="hud-unit hud-player">
-                <div class="avatar-circle" id="player-avatar-frame" title="クリックでオリキャラ工房を確認">
-                    <canvas id="player-portrait-canvas" width="96" height="96"></canvas>
+                <div class="avatar-circle" id="player-avatar-frame" title="オリキャラ工房を開く（出撃中はロック）">
+                    <canvas id="player-portrait-canvas" width="112" height="112"></canvas>
                 </div>
                 <div class="bars-container">
                     <div class="unit-title-row">
                         <span class="unit-name" id="player-name">PLAYER (自作)</span>
-                        <span class="slot-limit-badge" id="slot-limit-badge">🟢 0/1体 (未ロック)</span>
+                        <span class="archetype-badge" id="player-archetype-badge">⚡スピード型</span>
+                        <span class="slot-limit-badge" id="slot-limit-badge">🟢 出撃前(編集可)</span>
                     </div>
                     <!-- 斜めHPバー -->
                     <div class="skew-bar-row">
@@ -51,29 +57,39 @@
                         <span class="skew-label sp-label-txt">SP / テンション</span>
                         <div class="gauge-frame sp-frame skew-box">
                             <div class="gauge-fill sp-fill" id="player-sp-bar"></div>
-                            <span class="gauge-text" id="player-sp-text">50%</span>
+                            <span class="gauge-text" id="player-sp-text">SP 60%</span>
                         </div>
                     </div>
-                    <!-- パラメータ表示 -->
-                    <div class="char-style-tag" id="player-spec-tag">⚔️ATK:1.05x | 📏範囲:3.4m | 💫ひるみ:1.15x | ⚡攻速:1.10x</div>
+                    <!-- パラメータ＆AI稼働表示 -->
+                    <div class="char-style-tag" id="player-spec-tag">⚔️ATK:1.05x | 📏範囲:3.4m | 💫ひるみ:1.12x | 🧠AI:ガンビット稼働中</div>
                 </div>
             </div>
 
-            <!-- 中央上部：ラウンドタイマー ＆ 連勝数 (画像の「99 ラウンド」ボックス再現) -->
+            <!-- 中央上部：ラウンドタイマー ＆ 連勝数 ＆ AUTO/観戦スイッチ -->
             <div class="hud-center">
                 <div class="round-timer-box">
                     <div class="timer-digits" id="round-timer-val">99</div>
                 </div>
-                <div class="round-sub-label">ラウンド <span id="round-num-val">1</span> (<strong id="current-wins" style="color:#ffd32a;">0</strong>連勝 / BEST:<span id="high-score">0</span>)</div>
+                <div class="round-sub-label">
+                    ROUND <span id="round-num-val">1</span>
+                    （🔥<strong id="current-wins" style="color:#ffd32a;">0</strong>連勝中 / BEST:<span id="high-score">0</span>）
+                </div>
+                <div class="director-bar">
+                    <button class="dir-btn active" id="btn-toggle-auto" title="自作AIによる完全自動バトルON/OFF">🤖 AUTO対戦: ON</button>
+                    <button class="dir-btn" id="btn-cinematic-mode" title="UIを消して3Dバトルを鑑賞（Hキー）">🎬 観戦カメラ</button>
+                    <button class="dir-btn brag-btn" id="btn-quick-brag" title="現在の連勝記録と挑戦状URLをXに投稿">🐦 生存報告</button>
+                </div>
             </div>
 
-            <!-- 右上：CPU ボスユニット -->
+            <!-- 右上：非同期ゴースト（または挑戦状王者）ユニット -->
             <div class="hud-unit hud-cpu">
                 <div class="bars-container cpu-bars">
                     <div class="unit-title-row cpu-title">
-                        <span class="char-style-tag" id="cpu-type">重撃ハンマー型</span>
-                        <span class="unit-name" id="cpu-name">CPU</span>
+                        <span class="archetype-badge cpu-arch" id="cpu-archetype-badge">💥一撃必殺型</span>
+                        <span class="unit-name" id="cpu-name">Ghost Fighter</span>
                     </div>
+                    <!-- ゴースト情報 -->
+                    <div class="char-style-tag" id="cpu-type">👻 非同期防衛ゴースト (2連勝帯)</div>
                     <!-- CPU 斜めHPバー -->
                     <div class="skew-bar-row cpu-skew-row">
                         <div class="gauge-frame hp-frame skew-box cpu-skew">
@@ -93,13 +109,13 @@
                     </div>
                 </div>
                 <div class="avatar-circle cpu-circle">
-                    <canvas id="cpu-portrait-canvas" width="96" height="96"></canvas>
+                    <canvas id="cpu-portrait-canvas" width="112" height="112"></canvas>
                 </div>
             </div>
         </div>
 
         <!-- ========================================================
-             左右コンボカウンター表示 (画像の「3 HIT! / 5 HIT! / 12 HIT! DAMAGE」完全再現)
+             左右コンボカウンター表示 (3 HIT! / 12 HIT! DAMAGE)
              ======================================================== -->
         <div class="combo-counter left-combo" id="combo-display-left">
             <div class="combo-hits"><span id="combo-hits-left">3</span> <small>HIT!</small></div>
@@ -117,29 +133,30 @@
             <div class="cutin-skill-name" id="cutin-skill">🔥 蒼雷・神速烈空閃 🔥</div>
         </div>
 
-        <!-- バトルメッセージ・アナウンス (KO, ROUND START, etc) -->
+        <!-- バトルメッセージ・アナウンス -->
         <div class="announcement" id="battle-announcement"></div>
 
         <!-- 浮動ダメージ数値コンテナ -->
         <div id="damage-numbers-layer"></div>
 
         <!-- ========================================================
-             左下メニューガイド ＆ オリキャラ工房ボタン (画像1左下のUI再現)
+             左下メニューガイド ＆ オリキャラ工房ボタン（出撃中は変更不可ロック！）
              ======================================================== -->
-        <div class="left-info-menu">
-            <div class="info-menu-item"><span class="key-pill">WASD</span> 操作・移動 / <span class="key-pill">Q</span> ロックオン</div>
-            <div class="info-menu-item" id="registered-status-line"><span class="key-pill">1/1</span> 登録枠: <strong id="registered-char-label">未ロック (変更可)</strong></div>
+        <div class="left-info-menu" id="left-info-menu">
+            <div class="info-menu-item"><span class="key-pill">CYCLES</span> Blender 5.2 Cycles Ray-Traced 環境＆PBR発光</div>
+            <div class="info-menu-item" id="registered-status-line">
+                <span class="key-pill">LOCK</span> 状態: <strong id="registered-char-label">出撃前（クリエイト可能）</strong>
+            </div>
             <div class="info-menu-actions">
-                <button class="studio-open-btn" id="open-creator-btn">🎨 オリキャラ作り込み工房</button>
-                <button class="studio-reset-btn" id="reset-avatar-btn" style="display: none;">🗑️ 登録解除(0連勝へ)</button>
+                <button class="studio-open-btn" id="open-creator-btn">🎨 オリキャラ＆AI工房</button>
+                <button class="studio-cert-btn" id="open-cert-btn">🖼️ 証明書カード生成</button>
             </div>
         </div>
 
         <!-- ========================================================
-             下部左右：4ボタン・ダイヤモンドパッド (画像1・2の「ATTACK」「SKILL」パッド完全再現)
+             下部左右：4ボタン・ダイヤモンドパッド (手動介入・コンボ操作も可能)
              ======================================================== -->
-        <!-- 左下：ATTACK 4ボタンパッド + ジョイスティック -->
-        <div class="bottom-left-cluster">
+        <div class="bottom-left-cluster" id="bottom-left-cluster">
             <div class="joystick-zone" id="joystick-zone" title="ドラッグで移動">
                 <div class="joystick-base">
                     <div class="joystick-stick" id="joystick-stick"></div>
@@ -149,22 +166,18 @@
             <div class="diamond-pad attack-pad">
                 <div class="pad-title">ATTACK</div>
                 <div class="pad-center-dots"><span></span><span></span><span></span><span></span></div>
-                <!-- 上：強攻撃・打ち上げ (Launch / Break) -->
                 <button class="d-btn d-top atk-heavy" id="btn-atk-heavy" title="打ち上げ・強斬り (U / Eキー)">
                     <span class="d-icon">🗡️</span>
                     <span class="d-sub">打ち上げ</span>
                 </button>
-                <!-- 左：高速連撃 (Light Rush) -->
                 <button class="d-btn d-left atk-rush" id="btn-atk-rush" title="高速ひるみ連撃 (J / Zキー)">
                     <span class="d-icon">⚡</span>
                     <span class="d-sub">連撃</span>
                 </button>
-                <!-- 右：広範囲コンボ (Wide Slash) -->
                 <button class="d-btn d-right atk-wide" id="btn-atk-wide" title="広範囲なぎ払い (I / Cキー)">
                     <span class="d-icon">⚔️</span>
                     <span class="d-sub">斬撃</span>
                 </button>
-                <!-- 下：ガード (Guard) -->
                 <button class="d-btn d-bottom atk-guard" id="btn-atk-guard" title="シールド防御 (Spaceキー)">
                     <span class="d-icon">🛡️</span>
                     <span class="d-sub">ガード</span>
@@ -172,27 +185,22 @@
             </div>
         </div>
 
-        <!-- 右下：SKILL 4ボタンパッド -->
-        <div class="bottom-right-cluster">
+        <div class="bottom-right-cluster" id="bottom-right-cluster">
             <div class="diamond-pad skill-pad">
                 <div class="pad-title">SKILL</div>
                 <div class="pad-center-dots"><span></span><span></span><span></span><span></span></div>
-                <!-- 上：超必殺奥義 (EX Ultimate - SP50) -->
                 <button class="d-btn d-top skl-ult" id="btn-skl-ult" title="必殺奥義 EX (SP50 / K・Xキー)">
                     <span class="d-icon">🌟</span>
                     <span class="d-sub">奥義EX</span>
                 </button>
-                <!-- 左：固有スキル技 (Skill Arts - SP20) -->
                 <button class="d-btn d-left skl-arts" id="btn-skl-arts" title="属性スキル技 (SP20 / O・Fキー)">
                     <span class="d-icon">🔥</span>
                     <span class="d-sub">SKILL</span>
                 </button>
-                <!-- 右：残像ステップ回避 (Dodge - SP15) -->
                 <button class="d-btn d-right skl-dodge" id="btn-skl-dodge" title="残像ステップ回避 (SP15 / L・Shiftキー)">
                     <span class="d-icon">💨</span>
                     <span class="d-sub">回避</span>
                 </button>
-                <!-- 下：ジャンプ (Jump) -->
                 <button class="d-btn d-bottom skl-jump" id="btn-skl-jump" title="ジャンプ・空中攻撃 (Vキー)">
                     <span class="d-icon">🦘</span>
                     <span class="d-sub">JUMP</span>
@@ -201,25 +209,25 @@
         </div>
 
         <!-- ========================================================
-             🎨 オリキャラ・クリエイト＆導入工房モーダル (1人1体限定・キャラデザ・動き・VFX・パラメータ配分)
+             🎨 オリキャラ＆AIクリエイト工房モーダル (1人1体・負けるまで変更不可ロック)
              ======================================================== -->
         <div class="creator-modal" id="creator-modal" style="display: none;">
             <div class="creator-card">
                 <div class="creator-header">
                     <div>
-                        <h2>🎨 オリキャラ作り込み＆導入工房 <span class="limit-pill">1人1体限定</span></h2>
-                        <p>キャラデザ・武器・コンボの動き・技エフェクト・パラメータ（合計100pt範囲内）を自由に設計して1体登録できます</p>
+                        <h2>🎨 オリキャラ＆自作AIクリエイト工房 <span class="limit-pill">出撃後は負けるまで変更不可</span></h2>
+                        <p>見た目・武器・相性タイプ・自作AIロジック（IF+THEN）・100pt範囲内パラメータを設定して戦場へ送り出します</p>
                     </div>
                     <button class="creator-close-btn" id="close-creator-btn">✕ 閉じる</button>
                 </div>
 
                 <div class="creator-body">
-                    <!-- 左カラム：キャラデザ ＆ 外部VRM/画像導入 -->
+                    <!-- ① キャラデザ ＆ 武器 ＆ 相性タイプ -->
                     <div class="creator-col">
-                        <h3>① キャラデザイン ＆ 武器選択</h3>
+                        <h3>① キャラデザイン ＆ 3すくみ相性</h3>
                         <div class="form-row">
                             <label>キャラクター名</label>
-                            <input type="text" id="cr-name" value="PLAYER (自作)" maxlength="18" class="cr-input">
+                            <input type="text" id="cr-name" value="アイアン・カイザー" maxlength="18" class="cr-input">
                         </div>
 
                         <div class="form-row">
@@ -234,13 +242,22 @@
                         </div>
 
                         <div class="form-row">
-                            <label>武器デザイン（リーチや構えに反映）</label>
+                            <label>武器デザイン（5種）</label>
                             <select id="cr-weapon" class="cr-select">
                                 <option value="rune_greatsword">🗡️ ルーン大剣（巨大な青輝石グレートソード）</option>
                                 <option value="sword_shield">🛡️ ナイト片手剣＆ラウンドシールド（剣盾セット）</option>
                                 <option value="magic_staff">🪄 アークメイジの星霊杖（クリスタル魔導スタッフ）</option>
                                 <option value="knuckle_gauntlet">🥊 覇王のナックルガントレット（両拳ヘビーグローブ）</option>
                                 <option value="crimson_katana">🔪 妖刀・紅蓮大太刀（長尺の抜刀カタナ）</option>
+                            </select>
+                        </div>
+
+                        <div class="form-row">
+                            <label>戦術相性タイプ（3すくみじゃんけん構造）</label>
+                            <select id="cr-archetype" class="cr-select">
+                                <option value="speed_assassin">⚡ スピード連撃型（💥一撃必殺に有利 ／ 🛡️鉄壁カウンターに不利）</option>
+                                <option value="one_shot_buster">💥 一撃必殺バスター型（🛡️鉄壁カウンターを粉砕 ／ ⚡スピード型に不利）</option>
+                                <option value="iron_counter">🛡️ 鉄壁カウンター型（⚡スピード型を完封 ／ 💥一撃必殺に不利）</option>
                             </select>
                         </div>
 
@@ -260,127 +277,229 @@
                         </div>
 
                         <div class="external-import-box">
-                            <div class="ext-title">📁 または外部ファイル（.vrm / .glb / .png）から導入</div>
+                            <div class="ext-title">📁 外部モデル/画像（.vrm / .glb / .png）導入</div>
                             <div class="ext-btns">
-                                <label for="vrm-file-input" class="ext-upload-btn">ファイルを選択</label>
+                                <label for="vrm-file-input" class="ext-upload-btn">ファイル選択</label>
                                 <input type="file" id="vrm-file-input" accept=".vrm,.glb,.png,.jpg,.jpeg" style="display: none;">
-                                <button type="button" class="dock-preset-btn" data-vrm="custom_characters/valkyrie_seraph.vrm">👼セラフ(.vrm)</button>
-                                <button type="button" class="dock-preset-btn" data-vrm="custom_characters/crimson_samurai_kuro.vrm">👹クロガネ(.vrm)</button>
-                                <button type="button" class="dock-preset-btn" data-vrm="custom_characters/golden_brawler_leo.vrm">🦁レオ(.vrm)</button>
+                                <button type="button" class="dock-preset-btn" data-vrm="custom_characters/valkyrie_seraph.vrm">👼セラフ</button>
+                                <button type="button" class="dock-preset-btn" data-vrm="custom_characters/crimson_samurai_kuro.vrm">👹クロガネ</button>
+                                <button type="button" class="dock-preset-btn" data-vrm="custom_characters/golden_brawler_leo.vrm">🦁レオ</button>
                             </div>
                         </div>
                     </div>
 
-                    <!-- 中央カラム：必要な動き（モーション） ＆ 技エフェクト -->
+                    <!-- ② 自作AIロジック（IF条件 + THEN行動）＆ モーション・エフェクト -->
                     <div class="creator-col">
-                        <h3>② 動き（コンボ型） ＆ 技エフェクト設定</h3>
+                        <h3>② 自作AIロジック (IF + THEN) ＆ 演出</h3>
                         <div class="form-row">
-                            <label>通常コンボ＆アクションの動き（モーションセット）</label>
-                            <select id="cr-motion" class="cr-select">
-                                <option value="heavy_buster">⚔️ 重撃バスター型（袈裟斬り➔360度回転薙ぎ➔打ち上げ➔宙返り兜割り）</option>
-                                <option value="speed_rush">⚡ 神速居合い連撃型（高速3連斬り➔踏み込み一閃➔旋風斬➔急降下突き）</option>
-                                <option value="acrobat_martial">🥊 疾風アッパー格闘型（連打ラッシュ➔昇龍アッパー打ち上げ➔空中メテオ蹴り）</option>
-                                <option value="magic_shooter">🪄 魔導シューター型（魔弾連射➔拡散レーザー波➔重力ノヴァ爆発）</option>
+                            <label>🧠 AIスロット1（最優先トリガー）</label>
+                            <div class="gambit-row">
+                                <select id="ai-if-1" class="cr-select">
+                                    <option value="sp_50">IF: SPが50%以上溜まったら</option>
+                                    <option value="enemy_stun">IF: 敵がひるみ/浮き状態なら</option>
+                                    <option value="hp_low">IF: 自分のHPが35%以下なら</option>
+                                </select>
+                                <span>➔</span>
+                                <select id="ai-then-1" class="cr-select">
+                                    <option value="ult_ex">THEN: 🌟必殺奥義EXを即発動</option>
+                                    <option value="skill_arts">THEN: 🔥属性SKILLで追撃</option>
+                                    <option value="dodge_step">THEN: 💨残像ステップで離脱</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <div class="form-row">
+                            <label>🧠 AIスロット2（対敵リアクション）</label>
+                            <div class="gambit-row">
+                                <select id="ai-if-2" class="cr-select">
+                                    <option value="enemy_atk">IF: 敵が攻撃モーション中なら</option>
+                                    <option value="enemy_guard">IF: 敵がガードを固めていたら</option>
+                                    <option value="sp_20">IF: SPが20%以上あるなら</option>
+                                </select>
+                                <span>➔</span>
+                                <select id="ai-then-2" class="cr-select">
+                                    <option value="dodge_step">THEN: 💨残像ステップ回避</option>
+                                    <option value="launch_atk">THEN: 🗡️打ち上げ強攻撃で崩す</option>
+                                    <option value="guard_hold">THEN: 🛡️シールドガード防御</option>
+                                    <option value="skill_arts">THEN: 🔥属性SKILLを発動</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <div class="form-row">
+                            <label>🧠 AIスロット3（基本コンボ戦術）</label>
+                            <select id="ai-base-tactic" class="cr-select">
+                                <option value="balanced_combo">⚔️ 接近して「連撃➔斬撃➔打ち上げ」をバランスよく繋ぐ</option>
+                                <option value="aggressive_rush">⚡ 超インファイトで高速ひるみ連撃を浴びせ続ける</option>
+                                <option value="hit_and_run">👟 技範囲ギリギリから広範囲斬撃＆ステップでヒット＆アウェイ</option>
                             </select>
                         </div>
 
                         <div class="form-row">
-                            <label>技エフェクト属性（斬撃・衝撃波・スキルのVFX演出）</label>
-                            <select id="cr-vfx" class="cr-select">
-                                <option value="plasma_cyan">⚡ 蒼雷・プラズマ（シアン＆黄金のクレセント光刃＋雷撃スパーク）</option>
-                                <option value="flame_crimson">🔥 紅蓮・フレイム（灼熱の炎斬撃＋爆炎トルネード火柱）</option>
-                                <option value="holy_astral">🌟 聖光・アストラル（白銀クロス閃光＋天から降り注ぐ聖槍群）</option>
-                                <option value="void_gravity">🌌 紫電・グラビティ（黒紫の次元裂傷レーザー＋重力ドーム爆発）</option>
-                            </select>
+                            <label>動き（モーション型） ＆ 技エフェクト属性</label>
+                            <div class="gambit-row">
+                                <select id="cr-motion" class="cr-select">
+                                    <option value="heavy_buster">⚔️ 重撃バスター型</option>
+                                    <option value="speed_rush">⚡ 神速居合い連撃型</option>
+                                    <option value="acrobat_martial">🥊 疾風アッパー格闘型</option>
+                                    <option value="magic_shooter">🪄 魔導シューター型</option>
+                                </select>
+                                <select id="cr-vfx" class="cr-select">
+                                    <option value="plasma_cyan">⚡ 蒼雷プラズマ</option>
+                                    <option value="flame_crimson">🔥 紅蓮フレイム</option>
+                                    <option value="holy_astral">🌟 聖光アストラル</option>
+                                    <option value="void_gravity">🌌 紫電グラビティ</option>
+                                </select>
+                            </div>
                         </div>
 
                         <div class="form-row">
-                            <label>必殺奥義名（カットイン表示）</label>
+                            <label>必殺奥義名（100%ゲージ時のカットイン）</label>
                             <input type="text" id="cr-skill-name" value="⚡ 蒼雷・神速烈空閃 ⚡" maxlength="24" class="cr-input">
-                        </div>
-
-                        <div class="combo-guide-box">
-                            <strong>💡 ひるみ＆コンボの仕組み:</strong><br>
-                            攻撃が当たるとCPUが<strong>「ひるみ（仰け反り）」</strong>状態になり行動が中断されます！<br>
-                            <code>⚡連撃(J)</code> ➔ <code>⚔️斬撃(I)</code> ➔ <code>🗡️打ち上げ(U)</code> ➔ <code>🔥SKILL(O)</code> ➔ <code>🌟奥義(K)</code> と繋げることで、<strong>10 HIT以上の大コンボ</strong>を叩き込めます！
                         </div>
                     </div>
 
-                    <!-- 右カラム：各種パラメータ配分（決められた範囲＆100pt予算制） -->
+                    <!-- ③ 各種パラメータ配分（総量規制100pt制） -->
                     <div class="creator-col">
                         <div class="pt-header-row">
-                            <h3>③ パラメータ配分 (範囲制限)</h3>
+                            <h3>③ パラメータ総量規制 (上限100pt)</h3>
                             <span class="pt-budget-badge" id="cr-pt-badge">残り: 25 / 100 PT</span>
                         </div>
                         <div class="preset-alloc-row">
                             <button type="button" class="alloc-btn" data-preset="balance">⚖️ バランス</button>
-                            <button type="button" class="alloc-btn" data-preset="power_range">🗡️ 広範囲・高火力</button>
-                            <button type="button" class="alloc-btn" data-preset="combo_stun">⚡ 高速・ひるみ連撃</button>
+                            <button type="button" class="alloc-btn" data-preset="power_range">💥 一撃必殺極振り</button>
+                            <button type="button" class="alloc-btn" data-preset="combo_stun">⚡ 神速ひるみ特化</button>
                         </div>
 
-                        <!-- 1. 攻撃力 (ATK) -->
                         <div class="slider-row">
                             <div class="slider-label">
-                                <span>⚔️ 攻撃力 (ATK) <small>[範囲: 0.85x〜1.40x]</small></span>
+                                <span>⚔️ 攻撃力 (ATK) <small>[0.85x〜1.40x]</small></span>
                                 <strong id="val-atk">1.05x (15pt)</strong>
                             </div>
                             <input type="range" id="sl-atk" min="0" max="40" value="15" class="cr-slider">
                         </div>
 
-                        <!-- 2. 技範囲・リーチ (RANGE) -->
                         <div class="slider-row">
                             <div class="slider-label">
-                                <span>📏 技範囲・リーチ <small>[範囲: 2.4m〜4.5m]</small></span>
+                                <span>📏 技範囲・リーチ <small>[2.4m〜4.5m]</small></span>
                                 <strong id="val-range">3.4m (18pt)</strong>
                             </div>
                             <input type="range" id="sl-range" min="0" max="40" value="18" class="cr-slider">
                         </div>
 
-                        <!-- 3. ひるませ力・体幹崩し (STUN) -->
                         <div class="slider-row">
                             <div class="slider-label">
-                                <span>💫 ひるませ力・崩し <small>[範囲: 0.80x〜1.50x]</small></span>
+                                <span>💫 ひるませ力・体幹崩し <small>[0.80x〜1.50x]</small></span>
                                 <strong id="val-stun">1.12x (18pt)</strong>
                             </div>
                             <input type="range" id="sl-stun" min="0" max="40" value="18" class="cr-slider">
                         </div>
 
-                        <!-- 4. 攻撃速度・コンボ連撃性 (ATK SPD) -->
                         <div class="slider-row">
                             <div class="slider-label">
-                                <span>⚡ 攻撃速度・連撃 <small>[範囲: 0.85x〜1.35x]</small></span>
+                                <span>⚡ 攻撃速度・連撃 <small>[0.85x〜1.35x]</small></span>
                                 <strong id="val-atkspd">1.08x (14pt)</strong>
                             </div>
                             <input type="range" id="sl-atkspd" min="0" max="40" value="14" class="cr-slider">
                         </div>
 
-                        <!-- 5. 移動速度 (MOVE SPD) -->
                         <div class="slider-row">
                             <div class="slider-label">
-                                <span>👟 移動スピード <small>[範囲: 5.2〜8.0]</small></span>
+                                <span>👟 移動スピード <small>[5.2〜8.0]</small></span>
                                 <strong id="val-spd">6.3 (10pt)</strong>
                             </div>
                             <input type="range" id="sl-spd" min="0" max="40" value="10" class="cr-slider">
+                        </div>
+
+                        <div class="combo-guide-box">
+                            <strong>🔒 負けるまで変更不可ルール:</strong><br>
+                            一度出撃すると、<strong>敗北（引退）するまでステータスやAIの変更は一切できません</strong>。敗北するとロックが解除され、敵の構成コピーや新キャラ作成が可能になります！
                         </div>
                     </div>
                 </div>
 
                 <div class="creator-footer">
-                    <button type="button" class="btn-preview-apply" id="btn-apply-preview">🔄 プレビュー反映（未ロックで試す）</button>
-                    <button type="button" class="btn-lock-register" id="btn-lock-register">🔒 このオリキャラで確定・本登録する（1人1体限定）</button>
+                    <button type="button" class="btn-preview-apply" id="btn-apply-preview">🔄 出撃前に試運転する</button>
+                    <button type="button" class="btn-lock-register" id="btn-lock-register">🚀 このオリキャラで出撃登録する（負けるまで変更不可！）</button>
                 </div>
             </div>
         </div>
 
-        <!-- ゲームオーバー・リザルトモーダル -->
+        <!-- ========================================================
+             🔥 5・10・15連勝「中間報告（生存報告）」ポップアップモーダル
+             ======================================================== -->
+        <div class="milestone-modal" id="milestone-modal" style="display: none;">
+            <div class="milestone-card">
+                <div class="milestone-badge">🔥 SURVIVAL STREAK MILESTONE 🔥</div>
+                <h2 id="milestone-title">現在 5 連勝突破！！</h2>
+                <p id="milestone-desc">無敗の絶対王者として戦場を席巻中！<br>この連勝記録と「挑戦状ディープリンク」をSNSに轟かせますか？</p>
+                <div class="milestone-actions">
+                    <button class="btn-sns" id="btn-milestone-share">🐦 X に生存報告＆挑戦状をポストする</button>
+                    <button class="btn-cert" id="btn-milestone-cert">🖼️ 連勝証明書カードを見る</button>
+                    <button class="btn-retry" id="btn-milestone-continue">⚔️ そのまま次の試合へ進む</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- ========================================================
+             💀 敗北時：「【引退記念】ドラマリザルト ＆ 敗因分析アナリティクス ＆ 敵構成コピー」
+             ======================================================== -->
         <div class="result-modal" id="result-modal" style="display: none;">
-            <div class="result-card">
-                <h2 class="result-title">💀 GAME OVER 💀</h2>
-                <p class="result-score-line">今回の連勝記録: <strong id="modal-wins">0</strong> 連勝</p>
-                <p class="result-best-line">過去最高記録: <span id="modal-high-score">0</span> 連勝</p>
-                <div class="result-actions">
-                    <button class="btn-sns" id="btn-share-x">🐦 X (Twitter) に記録を投稿する</button>
-                    <button class="btn-retry" id="btn-retry">🔄 もう一度挑戦する</button>
+            <div class="result-card wide-result">
+                <div class="retire-banner">⚔️ HONORABLE RETIREMENT — 引退記念 ⚔️</div>
+                <h2 class="result-title" id="retire-headline">【引退】アイアン・カイザー、強敵の前に散る。</h2>
+                <p class="result-score-line">
+                    通算 <strong id="modal-wins" style="color:#ffd32a; font-size:28px;">0</strong> 連勝 — 我が戦いに悔いなし！
+                    <small style="color:#94a3b8; margin-left:8px;">(自己ベスト: <span id="modal-high-score">0</span> 連勝)</small>
+                </p>
+
+                <!-- 📊 敗因分析（アナリティクス）パネル -->
+                <div class="analytics-box">
+                    <h4>📊 バトル敗因分析（アナリティクス）</h4>
+                    <div class="analytics-bars">
+                        <div class="ana-row">
+                            <span>🗡️ 与えた総ダメージ</span>
+                            <div class="ana-bar-bg"><div class="ana-bar-fill dmg-dealt" id="ana-bar-dealt"></div></div>
+                            <strong id="ana-val-dealt">0</strong>
+                        </div>
+                        <div class="ana-row">
+                            <span>🛡️ 受けた総ダメージ</span>
+                            <div class="ana-bar-bg"><div class="ana-bar-fill dmg-taken" id="ana-bar-taken"></div></div>
+                            <strong id="ana-val-taken">0</strong>
+                        </div>
+                        <div class="ana-row">
+                            <span>💫 ひるみ奪取 / 最大HIT</span>
+                            <div class="ana-bar-bg"><div class="ana-bar-fill stun-cnt" id="ana-bar-stun"></div></div>
+                            <strong id="ana-val-stun">0回 / 0 HIT</strong>
+                        </div>
+                    </div>
+                    <div class="ana-advice" id="ana-advice-text">
+                        💡 分析結果: 相手の攻撃力に押し切られました。次は「ひるませ力」や相性有利なタイプで挑戦しましょう！
+                    </div>
+                </div>
+
+                <div class="result-actions-grid">
+                    <button class="btn-sns" id="btn-share-x">🐦 【引退記念】戦績をXにポストする</button>
+                    <button class="btn-cert" id="btn-result-cert">🖼️ 引退証明書カード(PNG)を生成</button>
+                    <button class="btn-copy-enemy" id="btn-copy-enemy">📋 勝った相手の構成をコピーして新キャラ作成</button>
+                    <button class="btn-retry" id="btn-retry">🎨 ゼロから新しいオリキャラを作り直す</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- ========================================================
+             🖼️ ワンタップ「連勝 / 引退 証明書カード」画像生成モーダル
+             ======================================================== -->
+        <div class="cert-modal" id="cert-modal" style="display: none;">
+            <div class="cert-card">
+                <div class="cert-header">
+                    <h3>🖼️ 公式バトル証明書カード（Blender 5.2 Cycles 合成）</h3>
+                    <button class="creator-close-btn" id="close-cert-btn">✕ 閉じる</button>
+                </div>
+                <canvas id="certificate-canvas" width="720" height="420"></canvas>
+                <div class="cert-actions">
+                    <button class="btn-lock-register" id="btn-download-cert">💾 証明書画像 (PNG) を保存する</button>
+                    <button class="btn-sns" id="btn-share-from-cert">🐦 挑戦状リンク付きで X にポストする</button>
                 </div>
             </div>
         </div>
@@ -394,11 +513,10 @@
 
     <!-- 免責事項フッター -->
     <div class="disclaimer">
-        ※オリキャラは【1人1体限定】で登録でき、設定したキャラデザ・動き・エフェクト・範囲内パラメータ（攻撃力・技範囲・ひるみ力・速度）がリアルタイム戦闘に反映されます。すべての処理はブラウザ内（ローカル）で行われます。
+        ※一度出撃したキャラクターは負けるまで変更不可（ロック）となります。SNS投稿リンクを踏むとその連勝中の王者ゴーストに直接挑戦できます。
     </div>
 </div>
 
-<!-- メイン3Dバトル＆オリキャラ工房スクリプト -->
 <script type="module" src="main.js"></script>
 
 </body>

@@ -39,6 +39,12 @@ namespace UnlimitedSurvival
         [Tooltip("過去最高連勝記録 (PlayerPrefs保存)")]
         [SerializeField] private int highScoreWinStreak = 0;
 
+        [Tooltip("出撃ロック状態 (is_active: trueの間はオリキャラ変更不可、敗北時のみfalseへ解除)")]
+        [SerializeField] private bool isActiveLocked = true;
+
+        [Tooltip("生存報告ポップアップを表示する連勝間隔 (例: 5連勝ごと)")]
+        [SerializeField] private int milestoneInterval = 5;
+
         [Header("=== Health Carry-Over Settings (体力引き継ぎ) ===")]
         [Tooltip("次試合への体力引き継ぎ方式")]
         [SerializeField] private HealthCarryOverMode healthCarryOverMode = HealthCarryOverMode.PercentageBonusHeal;
@@ -156,11 +162,13 @@ namespace UnlimitedSurvival
 
         /// <summary>
         /// プレイヤーがCPUに勝利（ボス死亡判定時など）した際に呼び出します。
+        /// 勝利中は isActiveLocked = true が維持され、オリキャラの変更はロックされます。
         /// </summary>
         public void OnPlayerWin()
         {
+            isActiveLocked = true;
             currentWinStreak++;
-            Debug.Log($"[SurvivalGameManager] Player Won! Current Win Streak: {currentWinStreak}");
+            Debug.Log($"[SurvivalGameManager] Player Won! Current Win Streak: {currentWinStreak} (isActiveLocked: {isActiveLocked})");
 
             // ハイスコア更新チェック
             bool isNewRecord = false;
@@ -170,6 +178,12 @@ namespace UnlimitedSurvival
                 SaveHighScore();
                 isNewRecord = true;
                 Debug.Log($"[SurvivalGameManager] 🎉 New High Score: {highScoreWinStreak} wins!");
+            }
+
+            // 5連勝ごと（milestoneInterval）の生存報告ログ
+            if (milestoneInterval > 0 && currentWinStreak % milestoneInterval == 0)
+            {
+                Debug.Log($"[SurvivalGameManager] 🔥 Milestone Reached! Currently on a {currentWinStreak}-Win Streak!");
             }
 
             // UI更新
@@ -186,10 +200,12 @@ namespace UnlimitedSurvival
 
         /// <summary>
         /// プレイヤーが敗北（プレイヤー死亡判定時など）した際に呼び出します。
+        /// 敗北した瞬間のみ isActiveLocked = false となり、現キャラが「名誉の引退」となって新オリキャラ作成が解放されます。
         /// </summary>
         public void OnPlayerLose()
         {
-            Debug.Log($"[SurvivalGameManager] Player Lost! Final Streak: {currentWinStreak}");
+            isActiveLocked = false;
+            Debug.Log($"[SurvivalGameManager] 【引退】 Player Lost! Final Streak: {currentWinStreak} (Character Slot Unlocked)");
 
             bool isNewRecord = false;
             if (currentWinStreak > highScoreWinStreak)

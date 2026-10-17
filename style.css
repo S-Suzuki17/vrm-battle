@@ -1057,3 +1057,279 @@ body {
     text-align: center;
     padding-top: 4px;
 }
+
+/* ========================================================
+   監督・観戦モードバー (AUTO対戦 / シネマティックカメラ / 生存報告)
+   ======================================================== */
+.director-bar {
+    display: flex;
+    gap: 5px;
+    margin-top: 4px;
+    pointer-events: auto;
+}
+
+.dir-btn {
+    background: rgba(15, 23, 42, 0.88);
+    color: #e2e8f0;
+    border: 1.5px solid #475569;
+    padding: 3px 9px;
+    border-radius: 12px;
+    font-size: 11px;
+    font-weight: 900;
+    cursor: pointer;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.65);
+    transition: all 0.15s;
+}
+
+.dir-btn.active {
+    background: linear-gradient(135deg, #10b981, #059669);
+    color: #fff;
+    border-color: #a7f3d0;
+    box-shadow: 0 0 12px rgba(16, 185, 129, 0.65);
+}
+
+.dir-btn.brag-btn {
+    background: linear-gradient(135deg, #1da1f2, #0284c7);
+    color: #fff;
+    border-color: #bae6fd;
+}
+
+.archetype-badge {
+    background: rgba(56, 189, 248, 0.25);
+    border: 1px solid #38bdf8;
+    color: #7dd3fc;
+    font-size: 10px;
+    font-weight: 900;
+    padding: 1px 6px;
+    border-radius: 4px;
+}
+
+.archetype-badge.cpu-arch {
+    background: rgba(251, 146, 60, 0.25);
+    border-color: #fb923c;
+    color: #fed7aa;
+}
+
+.cinematic-exit-pill {
+    position: absolute;
+    top: 12px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(0, 0, 0, 0.72);
+    border: 1px solid var(--accent-gold);
+    color: var(--accent-gold);
+    padding: 5px 14px;
+    border-radius: 20px;
+    font-size: 12px;
+    font-weight: 800;
+    z-index: 60;
+    cursor: pointer;
+}
+
+.studio-cert-btn {
+    background: linear-gradient(135deg, #38bdf8, #0284c7);
+    color: #fff;
+    border: 1px solid #bae6fd;
+    padding: 5px 10px;
+    border-radius: 6px;
+    font-size: 11px;
+    font-weight: 900;
+    cursor: pointer;
+}
+
+.gambit-row {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+}
+
+.gambit-row .cr-select {
+    flex: 1;
+    padding: 5px 6px;
+    font-size: 11px;
+}
+
+.gambit-row span {
+    color: var(--accent-gold);
+    font-weight: 900;
+}
+
+/* ========================================================
+   🔥 中間生存報告 ＆ 💀 引退アナリティクス ＆ 🖼️ 証明書モーダル
+   ======================================================== */
+.milestone-modal, .cert-modal {
+    position: absolute;
+    inset: 0;
+    background: rgba(5, 9, 18, 0.85);
+    backdrop-filter: blur(6px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 95;
+    padding: 14px;
+}
+
+.milestone-card, .cert-card {
+    background: linear-gradient(160deg, #1e293b 0%, #0f172a 100%);
+    border: 2.5px solid var(--accent-gold);
+    border-radius: 14px;
+    padding: 22px;
+    text-align: center;
+    max-width: 760px;
+    box-shadow: 0 20px 55px rgba(0,0,0,0.95);
+}
+
+.milestone-badge, .retire-banner {
+    display: inline-block;
+    background: linear-gradient(90deg, #ff9f1a, #ff3838);
+    color: #fff;
+    font-size: 11px;
+    font-weight: 900;
+    padding: 3px 12px;
+    border-radius: 20px;
+    margin-bottom: 8px;
+    letter-spacing: 1px;
+}
+
+.milestone-card h2 {
+    font-size: 32px;
+    color: var(--accent-gold);
+    margin-bottom: 8px;
+}
+
+.milestone-card p {
+    font-size: 14px;
+    color: #e2e8f0;
+    margin-bottom: 18px;
+    line-height: 1.5;
+}
+
+.milestone-actions, .cert-actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 10px;
+    margin-top: 12px;
+}
+
+.result-card.wide-result {
+    max-width: 660px;
+    width: 100%;
+    padding: 22px;
+}
+
+.result-card.wide-result .result-title {
+    font-size: 24px;
+    color: #fff;
+    text-shadow: 0 0 12px rgba(255, 71, 87, 0.8);
+}
+
+.analytics-box {
+    background: rgba(15, 23, 42, 0.85);
+    border: 1px solid rgba(148, 163, 184, 0.3);
+    border-radius: 10px;
+    padding: 12px 14px;
+    margin: 14px 0;
+    text-align: left;
+}
+
+.analytics-box h4 {
+    font-size: 13px;
+    color: #38bdf8;
+    margin-bottom: 8px;
+}
+
+.analytics-bars {
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+}
+
+.ana-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 12px;
+}
+
+.ana-row > span {
+    width: 145px;
+    color: #cbd5e1;
+    font-weight: 700;
+}
+
+.ana-bar-bg {
+    flex: 1;
+    height: 12px;
+    background: #1e293b;
+    border-radius: 6px;
+    overflow: hidden;
+}
+
+.ana-bar-fill {
+    height: 100%;
+    width: 50%;
+    border-radius: 6px;
+}
+
+.ana-bar-fill.dmg-dealt { background: linear-gradient(90deg, #10b981, #34d399); }
+.ana-bar-fill.dmg-taken { background: linear-gradient(90deg, #ef4444, #f87171); }
+.ana-bar-fill.stun-cnt  { background: linear-gradient(90deg, #0284c7, #38bdf8); }
+
+.ana-row > strong {
+    width: 90px;
+    text-align: right;
+    color: var(--accent-gold);
+}
+
+.ana-advice {
+    margin-top: 10px;
+    padding: 7px 10px;
+    background: rgba(255, 211, 42, 0.1);
+    border-left: 3px solid var(--accent-gold);
+    font-size: 12px;
+    color: #fef08a;
+}
+
+.result-actions-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 9px;
+}
+
+.btn-cert {
+    background: linear-gradient(135deg, #8b5cf6, #6d28d9);
+    color: #fff;
+    border: 1px solid #ddd6fe;
+    padding: 10px 14px;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 800;
+    cursor: pointer;
+}
+
+.btn-copy-enemy {
+    background: linear-gradient(135deg, #f59e0b, #d97706);
+    color: #000;
+    border: 1px solid #fef08a;
+    padding: 10px 14px;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 900;
+    cursor: pointer;
+}
+
+#certificate-canvas {
+    max-width: 100%;
+    height: auto;
+    border-radius: 8px;
+    border: 2px solid #475569;
+    margin-top: 8px;
+}
+
+.cert-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
