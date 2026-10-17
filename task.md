@@ -1,43 +1,47 @@
-# 3D自作キャラバトル — アップロード用オリジナル自作キャラクター制作 & マルチフォーマット対応計画
+# 3D自作キャラバトル — 本格フルボディモーション ＆ 超ド派手VFXエフェクト大改修計画
 
 ## 概要
-ユーザーが「自分のキャラとしてアップロード（ドラッグ＆ドロップ / ファイル選択）」してテスト・プレイできるよう、**Blender 5.2.2 LTS** でヒューマノイドボーン（Armature）と `VRMC_vrm` (VRM 1.0) メタデータを備えた **3体のオリジナル3Dキャラクター（`.vrm` / `.glb` / `.fbx` / `.png`）** を制作し、`custom_characters/` フォルダに出力する。
+「キャラクターの動き」と「技のエフェクト」を劇的に進化させるため、単調な回転や単純なリング表示を刷新し、**全身多関節キーフレーム補間モーション（踏み込み・回転斬り・ジャンプ兜割り・残像ステップ）**と、**キャラクター固有の超ド派手3D必殺技エフェクト＆ヒットストップ＆火花バーストシステム**を実装する。
 
-## 制作するアップロード用キャラクター3体（Mermaid図）
+## モーション ＆ VFX 強化アーキテクチャ（Mermaid図）
 
 ```mermaid
 flowchart TD
-    subgraph CustomChars ["📁 custom_characters/ (アップロード用キャラ一式)"]
-        C1["① valkyrie_seraph (.vrm / .glb / .fbx / .png)\n【蒼穹の戦乙女 セラフ】\n白銀＆黄金の聖騎士・6枚の光翼・羽根ティアラ"]
-        C2["② crimson_samurai_kuro (.vrm / .glb / .fbx / .png)\n【紅蓮の剣豪 クロガネ】\n漆黒＆紅蓮の武者鎧・三日月兜角・大袖装甲"]
-        C3["③ golden_brawler_leo (.vrm / .glb / .fbx / .png)\n【黄金の覇王 レオ】\n黄金の獅子王冠・覇王マント・巨大覇気ガントレット"]
+    subgraph MotionEngine ["🕺 全身フルボディ・アクションモーション"]
+        Stance["ファイティング構え (重心沈み込み・胸呼吸・半身構え)"]
+        Run["前傾ダッシュ (腰バウンス・胸ツイスト・肘膝屈伸・足元砂煙)"]
+        Combo1["コンボ1段目: 踏み込み袈裟斬り (腰捻り + 斜め振り下ろし)"]
+        Combo2["コンボ2段目: 360度スピン回転薙ぎ払い (全身高速スピン)"]
+        Combo3["コンボ3段目: 空中サマーソルト兜割り (ジャンプ宙返り叩きつけ)"]
+        DodgeGhost["残像ステップ回避 (ホログラム残像3連生成)"]
     end
 
-    subgraph WebUpload ["🌐 Web版 アップロード機能"]
-        DND["ドラッグ＆ドロップ / ファイル選択\n(.vrm / .glb / .png / .jpg 全対応)"]
-        QuickBtn["ワンクリック試着プリセットボタン\n(ファイル選択なしでも即テスト可能)"]
-        UniqueSkill["キャラ固有の必殺技カットイン名＆オーラ色変化"]
+    subgraph VFXEngine ["💥 多層3D技エフェクト & 打撃演出"]
+        Crescent["3重クレセント斬撃波 (白熱コア + オーラ + 火花トレイル)"]
+        Sparks["ヒットスパーク粒子 (打撃点から50個の光粒が物理飛散)"]
+        HitStop["ヒットストップ (強打撃瞬間の0.07秒フレームフリーズ + 強シェイク)"]
+        GroundSlam["地面クレーター衝撃波 & 飛散ロック破片 & 光柱"]
     end
 
-    subgraph UnityUpload ["🎮 Unity 6 アップロード機能"]
-        Loader["UserCharacterLoader.cs\n(.png スキン画像 & .fbx モデル対応)"]
+    subgraph UltimateVFX ["🌟 キャラ別・固有必殺技シネマティックVFX"]
+        U_Seraph["👼 セラフ: 空中浮遊 + 聖槍の豪雨(18本) + 蒼天クロス光柱"]
+        U_Kuro["👹 クロガネ: 神速居合いすり抜け(残像5連) + 空間次元斬12連 + 遅延爆発"]
+        U_Leo["🦁 レオ: 覇王の赤黒落雷 + 巨大黄金メテオ拳 + 灼熱トルネード火柱"]
+        U_Knight["⚔️ ナイト: 極太プラズマ・バスターキャノン照射 + スパイラル衝撃波"]
     end
 
-    CustomChars --> DND --> UniqueSkill
-    CustomChars --> QuickBtn
-    CustomChars --> Loader
+    MotionEngine --> VFXEngine --> UltimateVFX
 ```
 
 ## タスク進捗
 
-- [x] 1. **Blender 5.2 + VRM 1.0 ビルダースクリプト (`blender_generate_custom_chars.py`) の作成と実行**:
-  - ヒューマノイド Armature（`hips`, `spine`, `chest`, `head`, `leftUpperArm`, `rightUpperArm`, `leftUpperLeg`, `rightUpperLeg` 等）の構築とウェイト付け
-  - 3体（`valkyrie_seraph`, `crimson_samurai_kuro`, `golden_brawler_leo`）のモデリングと `.glb` / `.fbx` 出力
-  - GLBバイナリへの `VRMC_vrm` (VRM 1.0) 拡張・メタデータ・ボーンマッピング注入による `.vrm` ファイル生成
-  - Unity `UserCharacterLoader.cs` 用のカスタムキャラクターテクスチャ画像（`.png` 3種）の生成
-- [x] 2. **Web版 (`main.js`, `index.html`, `style.css`) のアップロード機能拡張**:
-  - `.vrm` に加え、`.glb` および `.png` / `.jpg`（テクスチャ動的貼り替え）のドラッグ＆ドロップ読み込みに対応
-  - 読み込んだキャラクターに応じた固有必殺技カットイン名・斬撃カラーの自動反映
-  - 画面下部のVRMドックに、`custom_characters/` 内の3体をすぐ試せるクイック召喚ボタンも併設
-- [x] 3. **動作確認 & GitHubへのコミット・プッシュ**:
-  - 生成された `.vrm` / `.glb` / `.fbx` / `.png` の検証、ローカルサーバー配信確認、GitHubプッシュ
+- [x] 1. **全身アクションモーションエンジンの実装 (`main.js` & `UnityPlayerActionController.cs`)**:
+  - 格闘構えアイドル、前傾ダッシュ＆砂煙パーティクル
+  - コンボ1段目（袈裟斬り）、2段目（360度スピン薙ぎ払い）、3段目（ジャンプ宙返り叩きつけスラム）
+  - ステップ回避時のホログラム残像（Afterimage Ghosts）生成
+- [x] 2. **多層3Dエフェクト（VFX）＆ヒットストップの実装**:
+  - 多層クレセント斬撃メッシュ、50個の物理飛散ヒットスパーク、岩石破片（Debris）、光の柱（Light Pillar）、赤黒サンダーボルト
+  - 打撃瞬間のヒットストップ（0.07秒フリーズ）＆ダイナミックカメラワーク
+- [x] 3. **キャラクター別・固有必殺技3D演出の実装**:
+  - セラフ（聖槍の豪雨＆聖光柱）、クロガネ（居合い瞬間移動＆空間次元斬14連）、レオ（覇王雷撃＆巨大黄金拳メテオ）、サイバーナイト（極太プラズマレーザー）
+- [x] 4. **動作確認 & GitHubへのプッシュ**
