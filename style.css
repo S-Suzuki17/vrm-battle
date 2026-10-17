@@ -843,6 +843,24 @@ body {
     padding-top: 10px;
 }
 
+.btn-ai-prompt {
+    background: linear-gradient(135deg, #6c5ce7, #a29bfe);
+    color: #fff;
+    border: 1px solid #dcdde1;
+    padding: 9px 16px;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 800;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.btn-ai-prompt:hover {
+    background: linear-gradient(135deg, #5758bb, #8c7ae6);
+    box-shadow: 0 0 12px rgba(162, 155, 254, 0.6);
+    transform: translateY(-1px);
+}
+
 .btn-preview-apply {
     background: #334155;
     color: #fff;
@@ -1490,7 +1508,218 @@ body {
 }
 
 body.cinematic-spectator .city-minimap-wrap,
-body.cinematic-spectator .enemy-world-hud {
+body.cinematic-spectator .enemy-world-hud,
+body.cinematic-spectator .sakurai-inspector-panel {
     opacity: 0;
     pointer-events: none;
+}
+
+/* ========================================================
+   『桜井政博のゲーム作るには』全39講 統合UIスタイル
+   - J-8「大事なものをより大きく」＆ K-06「『スマブラ』のふっとばし％」
+   - B-5「悪魔の釜」(ホンキ度 1.0〜9.0)
+   - D-1「大事なところはストップ！」特大フィニッシュズーム稲妻バナー
+   - L-5「参戦ムービー」スプラッシュカットイン
+   - K-08/C-1/D-4 桜井式60fpsフレーム＆【パラメーター】モニター
+   ======================================================== */
+.smash-pct-badge {
+    display: inline-flex;
+    align-items: baseline;
+    background: rgba(15, 23, 42, 0.92);
+    border: 2px solid #ffd32a;
+    border-radius: 8px;
+    padding: 1px 8px;
+    font-size: 20px;
+    font-weight: 900;
+    font-style: italic;
+    color: #ffffff;
+    text-shadow: 2px 2px 0 #000, 0 0 10px rgba(255, 211, 42, 0.8);
+    margin-left: 6px;
+    transition: transform 0.12s cubic-bezier(0.18, 0.89, 0.32, 1.35), color 0.2s;
+}
+.smash-pct-badge small {
+    font-size: 11px;
+    margin-left: 2px;
+}
+.smash-pct-badge.cpu-pct {
+    margin-left: 0;
+    margin-right: 6px;
+    border-color: #ff4757;
+}
+
+.cauldron-bar {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    background: linear-gradient(90deg, rgba(127, 29, 29, 0.88), rgba(30, 41, 59, 0.92));
+    border: 1.5px solid #f59e0b;
+    border-radius: 999px;
+    padding: 2px 10px;
+    margin: 2px 0 3px;
+    font-size: 11px;
+    color: #fef3c7;
+    box-shadow: 0 0 12px rgba(245, 158, 11, 0.45);
+}
+.cauldron-title {
+    font-weight: 900;
+    color: #fde68a;
+}
+.cauldron-btn {
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    border: 1px solid #fbbf24;
+    background: rgba(15, 23, 42, 0.9);
+    color: #fbbf24;
+    font-weight: 900;
+    font-size: 12px;
+    line-height: 1;
+    cursor: pointer;
+    padding: 0;
+}
+.cauldron-btn:hover {
+    background: #f59e0b;
+    color: #000;
+}
+.cauldron-val {
+    font-size: 15px;
+    font-weight: 900;
+    color: #ff4757;
+    text-shadow: 0 0 8px rgba(255, 71, 87, 0.9);
+    min-width: 28px;
+    text-align: center;
+}
+.cauldron-bonus {
+    font-size: 10px;
+    font-weight: 800;
+    color: #7bed9f;
+}
+
+/* ⚡ D-1「大事なところはストップ！」特大フィニッシュズーム稲妻バナー */
+.finish-zoom-banner {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    z-index: 65;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0;
+    transition: opacity 0.12s ease;
+    background: radial-gradient(circle, rgba(220, 38, 38, 0.28) 0%, rgba(0, 0, 0, 0.72) 85%);
+}
+.finish-zoom-banner.active {
+    opacity: 1;
+}
+.fz-lightning-slash {
+    position: absolute;
+    width: 140%;
+    height: 95px;
+    background: linear-gradient(90deg, transparent, #dc2626 20%, #ffffff 50%, #f59e0b 80%, transparent);
+    transform: rotate(-11deg);
+    box-shadow: 0 0 45px #ef4444, 0 0 90px #f59e0b;
+}
+.fz-text {
+    position: relative;
+    font-size: 56px;
+    font-weight: 900;
+    font-style: italic;
+    letter-spacing: 3px;
+    color: #ffffff;
+    text-shadow: 4px 4px 0 #000, -3px -3px 0 #dc2626, 0 0 28px #fbbf24;
+    transform: rotate(-6deg) scale(1.1);
+}
+
+/* 🎬 L-5「参戦ムービー」スプラッシュカットイン */
+.challenger-splash-banner {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 24%;
+    z-index: 58;
+    pointer-events: none;
+    background: linear-gradient(90deg, rgba(15, 23, 42, 0.96) 0%, rgba(185, 28, 28, 0.94) 55%, rgba(15, 23, 42, 0.96) 100%);
+    border-top: 3px solid #ffd32a;
+    border-bottom: 3px solid #00f2fe;
+    padding: 10px 24px;
+    text-align: center;
+    transform: translateX(-110%) skewX(-10deg);
+    opacity: 0;
+    transition: transform 0.28s cubic-bezier(0.18, 0.89, 0.32, 1.15), opacity 0.25s;
+    box-shadow: 0 12px 35px rgba(0, 0, 0, 0.85);
+}
+.challenger-splash-banner.active {
+    transform: translateX(0) skewX(-10deg);
+    opacity: 1;
+}
+.cs-sub {
+    font-size: 12px;
+    font-weight: 900;
+    color: #00f2fe;
+    letter-spacing: 2px;
+}
+.cs-main {
+    font-size: 30px;
+    font-weight: 900;
+    font-style: italic;
+    color: #ffd32a;
+    text-shadow: 3px 3px 0 #000;
+}
+
+/* 🛠️ K-08 / C-1 / D-4 / K-03 桜井式ライブ仕様・60fpsフレーム・【パラメーター】モニター */
+.sakurai-inspector-panel {
+    position: absolute;
+    left: 18px;
+    top: 118px;
+    width: 350px;
+    z-index: 42;
+    background: rgba(9, 14, 26, 0.92);
+    border: 2px solid #ffd32a;
+    border-radius: 12px;
+    padding: 10px 12px;
+    color: #e2e8f0;
+    font-size: 11px;
+    box-shadow: 0 10px 28px rgba(0, 0, 0, 0.8);
+    backdrop-filter: blur(8px);
+}
+.si-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-weight: 900;
+    color: #ffd32a;
+    border-bottom: 1px solid rgba(255, 211, 42, 0.35);
+    padding-bottom: 5px;
+    margin-bottom: 6px;
+}
+.si-close {
+    background: transparent;
+    border: none;
+    color: #94a3b8;
+    font-size: 14px;
+    cursor: pointer;
+}
+.si-section {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-bottom: 8px;
+    line-height: 1.45;
+}
+.si-sliders {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    border-top: 1px solid rgba(0, 242, 254, 0.25);
+    padding-top: 6px;
+}
+.si-sliders label {
+    display: flex;
+    flex-direction: column;
+    font-weight: 700;
+    color: #bae6fd;
+}
+.si-sliders input[type="range"] {
+    width: 100%;
+    accent-color: #00f2fe;
 }

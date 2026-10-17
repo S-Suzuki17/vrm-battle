@@ -29,7 +29,7 @@
         </div>
 
         <!-- ========================================================
-             上部：アニメ調・斜め平行四辺形ゲージ HUD (Cyclesポートレート＆非同期ゴースト表示)
+             上部：アニメ調・斜め平行四辺形ゲージ HUD (桜井式「大事なものをより大きく」J-8 ＆ ふっとび率％ K-06 統合)
              ======================================================== -->
         <div class="unlimited-hud" id="main-hud">
             <!-- 左上：PLAYER (自作) ユニット -->
@@ -42,6 +42,7 @@
                         <span class="unit-name" id="player-name">PLAYER (自作)</span>
                         <span class="archetype-badge" id="player-archetype-badge">⚡スピード型</span>
                         <span class="slot-limit-badge" id="slot-limit-badge">🟢 出撃前(編集可)</span>
+                        <span class="smash-pct-badge" id="player-launch-pct" title="K-06『スマブラ』のふっとばし蓄積率（高いほど遠くへ吹っ飛ぶ）">0<small>%</small></span>
                     </div>
                     <!-- 斜めHPバー -->
                     <div class="skew-bar-row">
@@ -60,12 +61,12 @@
                             <span class="gauge-text" id="player-sp-text">SP 60%</span>
                         </div>
                     </div>
-                    <!-- パラメータ＆AI稼働表示 -->
+                    <!-- パラメータ＆シティトライアル強化パッチ表示 -->
                     <div class="char-style-tag" id="player-spec-tag">⚔️ATK:1.05x | 📏範囲:3.4m | 💫ひるみ:1.12x | 🧠AI:ガンビット稼働中</div>
                 </div>
             </div>
 
-            <!-- 中央上部：ラウンドタイマー ＆ 連勝数 ＆ SCORE ＆ 再生リスト全機能スイッチ -->
+            <!-- 中央上部：ラウンドタイマー ＆ 悪魔の釜（ホンキ度 B-5/N-10） ＆ 監督・桜井式デバッグバー -->
             <div class="hud-center">
                 <div class="round-timer-box">
                     <div class="timer-digits" id="round-timer-val">99</div>
@@ -75,13 +76,23 @@
                     ｜ 🔥<strong id="current-wins" style="color:#ffd32a;">0</strong>連勝 (BEST:<span id="high-score">0</span>)
                     ｜ 🏆SCORE: <strong id="score-val" style="color:#00f2fe;">0</strong>
                 </div>
+                <!-- B-5「悪魔の釜」＆ B-1「リスクとリターン」：ホンキ度 (1.0〜9.0) スライダーバー -->
+                <div class="cauldron-bar" id="cauldron-intensity-wrap" title="B-5『悪魔の釜』(パルテナの鏡)：ホンキ度を上げると敵が強化される代わりに獲得スコア＆街中パッチ報酬が倍増！">
+                    <span class="cauldron-title">🏺 悪魔の釜 ホンキ度:</span>
+                    <button type="button" class="cauldron-btn" id="cauldron-down">－</button>
+                    <strong class="cauldron-val" id="cauldron-val">2.0</strong>
+                    <button type="button" class="cauldron-btn" id="cauldron-up">＋</button>
+                    <span class="cauldron-bonus" id="cauldron-bonus-label">(リスク1.1x / 報酬1.4x)</span>
+                </div>
                 <div class="director-bar">
                     <button class="dir-btn active" id="btn-auto-toggle" title="自作AIによる実寸大都市オートバトルON/OFF (Pキー)">🤖 AUTO街バトル: ON</button>
-                    <button class="dir-btn active" id="btn-lockon-toggle" title="敵ロックオン＆3DターゲットリングON/OFF (#16 Qキー)">🎯 ロックオン: ON</button>
-                    <button class="dir-btn active" id="btn-sound-toggle" title="剣撃SE・ダメージ音・爆発音・都市BGMのON/OFF (#7)">🔊 効果音/BGM: ON</button>
+                    <button class="dir-btn active" id="btn-lockon-toggle" title="敵ロックオン＆3DターゲットリングON/OFF (Qキー)">🎯 ロックオン: ON</button>
+                    <button class="dir-btn active" id="btn-sound-toggle" title="I-2/I-9 重要度ダッキング＆高アタック効果音ON/OFF">🔊 効果音/BGM: ON</button>
+                    <button class="dir-btn" id="btn-sakurai-debug" title="K-08/C-1/F-2 桜井式3D当たり判定球＆60fpsフレーム・【パラメーター】モニター (Bキー)">🛠️ 桜井式判定・仕様</button>
+                    <button class="dir-btn" id="btn-quick-retry" title="B-14 リトライは迅速に：ロード時間ゼロで即座にラウンド再挑戦 (Rキー)">⚡ 即リトライ</button>
                     <button class="dir-btn" id="btn-cinematic-mode" title="UIを消して都市バトルを鑑賞">🎬 観戦カメラ</button>
-                    <button class="dir-btn" id="btn-open-graph-loop" title="グラフ＆ループ＋再生リスト全19回実装状況">🕸️ グラフ＆全19講</button>
-                    <button class="dir-btn" id="btn-export-build" title="キャラ＆トークン＆AIデータをJSON書き出し (#18)">📦 書き出し</button>
+                    <button class="dir-btn" id="btn-open-graph-loop" title="『桜井政博のゲーム作るには』全39本（A〜N）＆グラフ/ループ統合状況">📚 桜井全39講＆グラフ</button>
+                    <button class="dir-btn" id="btn-export-build" title="キャラ＆トークン＆AIデータをJSON書き出し">📦 書き出し</button>
                     <button class="dir-btn brag-btn" id="btn-live-brag" title="現在の連勝記録と挑戦状URLをXに投稿">🐦 生存報告</button>
                 </div>
             </div>
@@ -90,6 +101,7 @@
             <div class="hud-unit hud-cpu">
                 <div class="bars-container cpu-bars">
                     <div class="unit-title-row cpu-title">
+                        <span class="smash-pct-badge cpu-pct" id="cpu-launch-pct" title="K-06『スマブラ』のふっとばし蓄積率（高いほどフィニッシュ技で街の彼方へ吹っ飛ぶ！）">0<small>%</small></span>
                         <span class="archetype-badge cpu-arch" id="cpu-archetype-badge">💥一撃必殺型</span>
                         <span class="unit-name" id="cpu-name">Ghost Fighter</span>
                     </div>
@@ -138,6 +150,43 @@
             <div class="cutin-skill-name" id="cutin-skill">🔥 蒼雷・神速烈空閃 🔥</div>
         </div>
 
+        <!-- ⚡ D-1「大事なところはストップ！」＆ N-12『スマブラSP』特大フィニッシュズーム稲妻バナー -->
+        <div class="finish-zoom-banner" id="finish-zoom-banner">
+            <div class="fz-lightning-slash"></div>
+            <div class="fz-text" id="finish-zoom-text">⚡ GAME!! CRITICAL FINISH! ⚡</div>
+        </div>
+
+        <!-- 🎬 L-5「参戦ムービー」スプラッシュカットインバナー -->
+        <div class="challenger-splash-banner" id="challenger-splash-banner">
+            <div class="cs-sub" id="cs-sub-text">🔥 NEW CHALLENGER — 渋谷ストリートに参戦!!</div>
+            <div class="cs-main" id="cs-main-name">赤鬼オーガ・ゴウラ 参戦!!</div>
+        </div>
+
+        <!-- 🛠️ K-02 / K-03 / K-08 / C-1 / D-4 / N-06 桜井式ライブ仕様・60fpsフレーム・【パラメーター】モニター -->
+        <div class="sakurai-inspector-panel" id="sakurai-inspector-panel" style="display: none;">
+            <div class="si-header">
+                <span>🛠️ 桜井政博のゲーム作るには — 60fpsフレーム＆【パラメーター】仕様モニター</span>
+                <button type="button" class="si-close" id="btn-close-sakurai-debug">✕</button>
+            </div>
+            <div class="si-section" id="si-frame-readout">
+                <div>⏱️ <strong>C-1/C-9 フレーム計測 (60fps)</strong>: <span id="si-frame-val">待機 (0F) | 硬直差 ±0F</span></div>
+                <div>🛑 <strong>D-4 8つのヒットストップ仕様</strong>: <span id="si-hitstop-val">0F (振動ベクトル: 0.0, 0.0)</span></div>
+                <div>💨 <strong>K-06 ふっとび物理 / K-09 ビル透過</strong>: <span id="si-physics-val">敵蓄積 0% | 透過ビル 0棟</span></div>
+                <div>🏙️ <strong>N-06 シティトライアル街中獲得パッチ</strong>: <span id="si-patches-val">🔴攻+0 🔵速+0 🟡撃+0 💚防+0</span></div>
+            </div>
+            <div class="si-sliders">
+                <label>【ヒットストップ倍率】(D-4): <strong id="lbl-prm-hitstop">1.0x</strong>
+                    <input type="range" id="prm-hitstop" min="0.4" max="2.5" step="0.1" value="1.0">
+                </label>
+                <label>【ふっとばし初速倍率】(K-06): <strong id="lbl-prm-launch">1.0x</strong>
+                    <input type="range" id="prm-launch" min="0.5" max="2.5" step="0.1" value="1.0">
+                </label>
+                <label>【カメラ注視点先読み】(D-5): <strong id="lbl-prm-camlead">1.8m</strong>
+                    <input type="range" id="prm-camlead" min="0.0" max="4.5" step="0.3" value="1.8">
+                </label>
+            </div>
+        </div>
+
         <!-- バトルメッセージ・アナウンス -->
         <div class="announcement" id="battle-announcement"></div>
 
@@ -156,7 +205,7 @@
         </div>
 
         <!-- 実寸大1:1スケール (160m×160m) 渋谷都市街区レーダーミニマップ -->
-        <div class="city-minimap-wrap" id="city-minimap-wrap" title="実寸大1:1スケール(160m×160m) 渋谷街区レーダー：青=自分 / 赤=敵(黄円=索敵範囲) / 緑=街頭破壊オブジェ">
+        <div class="city-minimap-wrap" id="city-minimap-wrap" title="D-09『マップもゲーム画面』：実寸大1:1スケール(160m×160m) 渋谷街区レーダー">
             <div class="minimap-header">🗺️ 実寸大 渋谷街区 (160m×160m)</div>
             <canvas id="city-minimap-canvas" width="148" height="148"></canvas>
             <div class="minimap-sub" id="minimap-coords">距離: 0.0m | 破壊物: 16個</div>
@@ -166,7 +215,7 @@
              左下メニューガイド ＆ オリキャラ工房ボタン（出撃中は変更不可ロック！）
              ======================================================== -->
         <div class="left-info-menu" id="left-info-menu">
-            <div class="info-menu-item"><span class="key-pill">1:1 CITY</span> 実寸大・渋谷スクランブル街区 (160m×160m / ビル当たり判定＆街頭破壊対応)</div>
+            <div class="info-menu-item"><span class="key-pill">SAKURAI 39</span> 桜井式ヒットストップ8仕様・ふっとび％・悪魔の釜・シティトライアル・ビル透過搭載</div>
             <div class="info-menu-item" id="registered-status-line">
                 <span class="key-pill">STATE</span> 状態: <strong id="registered-char-label">出撃前（クリエイト可能）</strong> ｜ <span id="animator-state-pill" style="color:#00f2fe;font-weight:800;">Anim: Idle</span>
             </div>
@@ -507,6 +556,7 @@
                 </div>
 
                 <div class="creator-footer">
+                    <button type="button" class="btn-ai-prompt" id="btn-copy-ai-3d-prompt" title="Tripo AI / Meshy AI / Luma AI 向けのゲームレディ3Dアセット生成プロンプトをワンクリックコピー">🤖 AI 3Dプロンプトコピー (Tripo/Meshy用)</button>
                     <button type="button" class="btn-preview-apply" id="btn-apply-preview">🔄 出撃前に街で試運転する</button>
                     <button type="button" class="btn-lock-register" id="btn-lock-register">🚀 このオリキャラで出撃登録する（負けるまで変更不可！）</button>
                 </div>
