@@ -1,51 +1,73 @@
-# 3D自作キャラバトル（VRM対応版）開発計画
+# 3D自作キャラバトル（アンリミテッドクルーズ風タイマンバトル仕様）開発計画
 
 ## 概要
-ユーザー提供のバトルロジック・UIプロトタイプをベースに、Three.jsによる3Dバトルアリーナ空間をドッキングし、ローカルVRMキャラクターのドラッグ＆ドロップ読み込み機能、およびGitHubリポジトリへの自動プッシュと確認環境の提供を行う。
+Wii「ワンピース アンリミテッドクルーズ」のタイマンバトル（VS/サバイバルモード）のゲーム性とフィールド環境を完全オマージュ。自作VRMアバターを使って、古代遺跡の断崖闘技場を舞台に、HP/MP(SP)リソース、リアルタイムコンボ攻撃、必殺技カットイン、ガード、回避、ロックオンを駆使した本格3Dアクションバトルを実現する。
 
-## アーキテクチャ & 状態遷移（Mermaid図）
+## 状態遷移・システムアーキテクチャ（Mermaid図）
 
 ```mermaid
 flowchart TD
-    subgraph UI ["ユーザーインターフェース (UI)"]
-        Title["タイトル・連勝・ハイスコア表示"]
-        BattleCanvas["3D Battle Screen (Three.js WebGLRenderer)"]
-        DropZone["VRM ドロップゾーン (ファイル選択/D&D)"]
-        ActionArea["アクションボタン (勝つ / 負ける)"]
-        ResultArea["ゲームオーバー & X共有 & リトライ"]
-        Disclaimer["免責事項"]
+    subgraph Input ["入力システム (PC/スマホ両対応)"]
+        Key["キーボード (WASD/J/K/L/Space)"]
+        Pad["バーチャルパッド & アクションボタン"]
+        Lock["ロックオン切替"]
     end
 
-    subgraph Logic ["ゲームロジック & データ"]
-        State["状態管理 (currentWins, highScore)"]
-        CPUGen["CPU自動生成 (4タイプ × 武器有無)"]
-        Storage["localStorage (最高記録)"]
-        Share["X Web Intent 連携"]
+    subgraph PlayerControl ["プレイヤーアクションステート"]
+        Idle["待機 / アイドル"]
+        Move["360度移動 / 旋回"]
+        Combo["通常攻撃コンボ (1段->2段->3段フィニッシュ)"]
+        Special["SP必殺技 (暗転・カメラズーム・大技)"]
+        Guard["ガード (被ダメージ80%カット + ガードスパーク)"]
+        Dodge["ステップ回避 (無敵時間 + SP消費)"]
+        Damaged["被弾 / ノックバック / ダウン"]
+        
+        Idle --> Move
+        Idle --> Combo
+        Idle --> Special
+        Idle --> Guard
+        Idle --> Dodge
+        Move --> Combo
+        Move --> Dodge
+        Damaged --> Idle
     end
 
-    subgraph ThreeJS ["3Dグラフィックス (Three.js & three-vrm)"]
-        Scene["Scene, Camera, Light, Stage/Grid"]
-        PlayerObj["プレイヤー (初期: ダミーロボ -> VRMロード時差し替え)"]
-        CPUObj["CPU (スタイルに応じたカラー・武器・シルエット)"]
-        BattleAnim["勝敗・アクション演出 (ノックバック, エフェクト)"]
+    subgraph BattleField ["アンリミテッドクルーズ風フィールド"]
+        Stage["古代遺跡の石造り円形コロシアム"]
+        Columns["破損した古代石柱 & レリーフ"]
+        Torches["松明 (揺らめく炎パーティクル + 点光源)"]
+        SeaSky["広大な大海原 & 雲と太陽光・大気フォグ"]
     end
 
-    DropZone -->|VRMファイル (ローカル読込)| PlayerObj
-    ActionArea -->|勝つ/負ける| State
-    State --> CPUGen
-    State --> Storage
-    State --> ResultArea
-    CPUGen --> CPUObj
-    State --> BattleAnim
-    BattleAnim --> BattleCanvas
+    subgraph BattleEngine ["リソース & バトルロジック"]
+        HP_MP["HP(1000) & MP/SP(100) ゲージ管理"]
+        HitStop["ヒットストップ & 画面振動 & ダメージ数値ポップ"]
+        ComboCount["コンボHIT数表示"]
+        CPU_AI["敵AI (間合い管理 / 攻撃 / ガード / 必殺技)"]
+    end
+
+    Input --> PlayerControl
+    PlayerControl --> BattleEngine
+    CPU_AI --> BattleEngine
+    BattleEngine --> BattleField
 ```
 
 ## タスク進捗
 
-- [x] 1. プロジェクト構造の設計と基本ファイル配置 (`index.html`, `main.js`, `style.css`)
-- [x] 2. Three.js 3D空間の構築（ステージ、カメラ、ライティング、アニメーションループ）
-- [x] 3. プレイヤーとCPUの3Dモデル表現（スタイリッシュなプレースホルダーモデル、CPUスタイルごとの武器・カラー反映）
-- [x] 4. VRMのドラッグ＆ドロップおよびファイル選択によるローカル読み込み機能の実装 (`@pixiv/three-vrm`)
-- [x] 5. 勝敗アクション＆リアクション演出（アタック、ノックバック、リスポーン演出、XシェアURLバグ修正）
-- [x] 6. ローカルテストサーバーの起動と動作検証
-- [x] 7. Git初期化およびGitHubリモートリポジトリ (`S-Suzuki17/vrm-battle`) 作成・プッシュ
+- [x] 1. **アンリミ風フィールドの構築**:
+  - 古代遺跡の石畳アリーナ、壊れた石柱群、揺らめくトーチの炎（パーティクル＋ライト）、大海原と空・大気フォグ
+- [x] 2. **リアルタイムプレイヤーアクション & コントローラ実装**:
+  - 移動（WASD & バーチャルスティック）、ロックオンTPSカメラ、旋回
+  - 3段通常攻撃コンボ、ヒット判定、攻撃エフェクト
+  - ガード（Space）、ステップ回避（L）、SP必殺技（K: 暗転＆技名カットイン＆大爆発）
+- [x] 3. **HP/MP(SP)リソース & アンリミ風HUD**:
+  - HPバー（ダメージ蓄積追随バー付き）、SP/MPバー（攻撃ヒット・時間でチャージ）
+  - コンボHIT数＆合計ダメージ表示、ダメージポップアップ
+  - スマホ用オンスクリーンコントローラー（移動パッド、攻撃/必殺/ガード/回避ボタン）
+- [x] 4. **敵CPUの本格アクションAI**:
+  - プレイヤーとの距離・間合いに応じた接近・後退・通常攻撃・ガード・必殺技
+  - 4スタイル（拳法家・重戦士・サイキッカー・スナイパー）の戦闘行動差別化
+- [x] 5. **VRMアバターとの完全統合**:
+  - ドロップされた自作VRMアバターのボーン制御（移動・攻撃モーション・ダウン・勝利ポーズ）
+- [x] 6. **テスト・動作検証・GitHubへのプッシュ**:
+  - ローカルサーバーでの動作確認、GitHubコミット＆プッシュ
