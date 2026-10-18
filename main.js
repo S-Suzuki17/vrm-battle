@@ -36,6 +36,8 @@ const CPU_BOSS_TYPES = [
         ghostOwner: "@Goura_Destroyer",
         style: "💥 一撃必殺・重撃ハンマー型",
         archetype: "one_shot_buster",
+        vfxElement: "fire_orange",
+        aiStyle: "titan_bruiser",
         category: "melee-weapon",
         skinColor: 0xb33939,
         armorColor: 0x7d1111,
@@ -55,6 +57,8 @@ const CPU_BOSS_TYPES = [
         ghostOwner: "@Garm_Speedster",
         style: "⚡ スピード剛腕ラッシュ型",
         archetype: "speed_assassin",
+        vfxElement: "thunder_cyan",
+        aiStyle: "phantom_skirmisher",
         category: "melee-bare",
         skinColor: 0x8c6239,
         armorColor: 0x4a3525,
@@ -74,6 +78,8 @@ const CPU_BOSS_TYPES = [
         ghostOwner: "@Aegis_Golem99",
         style: "🛡️ 鉄壁ガード・岩石砲型",
         archetype: "iron_counter",
+        vfxElement: "dark_purple",
+        aiStyle: "stalwart_turtle",
         category: "snipe-bare",
         skinColor: 0x957d65,
         armorColor: 0x5c4d3c,
@@ -93,6 +99,8 @@ const CPU_BOSS_TYPES = [
         ghostOwner: "@Gawain_HolyOrder",
         style: "🛡️ 鉄壁ガード＆聖大剣型",
         archetype: "iron_counter",
+        vfxElement: "ice_blue",
+        aiStyle: "stalwart_turtle",
         category: "melee-weapon",
         skinColor: 0xdcdde1,
         armorColor: 0x718093,
@@ -112,6 +120,8 @@ const CPU_BOSS_TYPES = [
         ghostOwner: "@Draco_Blitz",
         style: "⚡ 高速爪牙＆火球アサシン型",
         archetype: "speed_assassin",
+        vfxElement: "fire_orange",
+        aiStyle: "sorceress_zoner",
         category: "snipe-weapon",
         skinColor: 0x4cd137,
         armorColor: 0x218c74,
@@ -173,6 +183,10 @@ let cityBuildingsColliderList = []; // 実寸大高層ビルのAABBコリジョ�
 let cityStreetProps = [];           // 街中の破壊可能オブジェクト配列 (#4 生成と削除 & The暴DX)
 let cityTrialDropsList = [];        // N-06『カービィのエアライド』シティトライアル街中強化パッチ配列
 let lockOnReticleMesh = null;       // プレイリスト#16: 3Dターゲットロックオンリング
+let shibuyaBillboardTexture = null;  // 109大型街頭LEDビジョン動的CanvasTexture
+let shibuyaBillboardCanvas = null;
+let billboardUpdateTimer = 0;
+let cityJumpPads = [];               // 渋谷地下鉄通気口ジャンプパッド配列
 let effectsList = [];
 let projectilesList = [];
 let playerAuraParticles = [];
@@ -355,6 +369,36 @@ const SoundEngine = {
                 gain.gain.exponentialRampToValueAtTime(0.001, now + 0.58);
                 osc.start(now);
                 osc.stop(now + 0.58);
+            } else if (type === 'cheer') {
+                // C-24 ほめる！高コンボ・歓声ファンファーレ
+                this.duckUntil = now + 0.55;
+                osc.type = 'triangle';
+                osc.frequency.setValueAtTime(523.25, now);       // C5
+                osc.frequency.setValueAtTime(659.25, now + 0.08); // E5
+                osc.frequency.setValueAtTime(783.99, now + 0.16); // G5
+                osc.frequency.setValueAtTime(1046.50, now + 0.24); // C6
+                gain.gain.setValueAtTime(0.26, now);
+                gain.gain.exponentialRampToValueAtTime(0.001, now + 0.45);
+                osc.start(now);
+                osc.stop(now + 0.46);
+            } else if (type === 'jumppad') {
+                // 渋谷通気口ジェット気流発射音
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(180, now);
+                osc.frequency.exponentialRampToValueAtTime(780, now + 0.28);
+                gain.gain.setValueAtTime(0.30, now);
+                gain.gain.exponentialRampToValueAtTime(0.001, now + 0.32);
+                osc.start(now);
+                osc.stop(now + 0.32);
+            } else if (type === 'techroll') {
+                // 受身・起き上がりローリング音
+                osc.type = 'triangle';
+                osc.frequency.setValueAtTime(320, now);
+                osc.frequency.exponentialRampToValueAtTime(160, now + 0.14);
+                gain.gain.setValueAtTime(0.22, now);
+                gain.gain.exponentialRampToValueAtTime(0.001, now + 0.16);
+                osc.start(now);
+                osc.stop(now + 0.16);
             }
         } catch (e) {
             // AudioContext autoplay restriction fallback
@@ -362,25 +406,34 @@ const SoundEngine = {
     },
     startBgmLoop() {
         if (this.bgmTimer) clearInterval(this.bgmTimer);
-        const notes = [110, 130.81, 146.83, 164.81, 146.83, 130.81, 98.0, 110];
-        this.bgmTimer = setInterval(() => {
+        const standardNotes = [110, 130.81, 146.83, 164.81, 146.83, 130.81, 98.0, 110];
+        const crisisNotes = [220, 246.94, 261.63, 293.66, 329.63, 349.23, 392.0, 440];
+
+        const tick = () => {
             if (!this.enabled || !this.ctx || this.ctx.state !== 'running' || !isGameActive) return;
             const now = this.ctx.currentTime;
+            // B-18『ピンチで盛り上げる』: HP35%以下で高速かつ高音アルペジオの緊急クライシス曲へ変調
+            const isCrisis = player && player.hp > 0 && player.hp <= player.maxHp * 0.35;
+            const notes = isCrisis ? crisisNotes : standardNotes;
+
             // I-2 重要効果音が鳴っている最中はBGM音量を自動的に下げる（ダッキング）
-            const bgmVol = now < this.duckUntil ? 0.008 : 0.032;
+            const bgmVol = now < this.duckUntil ? 0.008 : (isCrisis ? 0.042 : 0.032);
             const osc = this.ctx.createOscillator();
             const gain = this.ctx.createGain();
-            osc.type = 'triangle';
+            osc.type = isCrisis ? 'sawtooth' : 'triangle';
             const freq = notes[this.bgmStep % notes.length];
             this.bgmStep++;
+
             osc.frequency.setValueAtTime(freq, now);
             gain.gain.setValueAtTime(bgmVol, now);
-            gain.gain.exponentialRampToValueAtTime(0.001, now + 0.22);
+            gain.gain.exponentialRampToValueAtTime(0.001, now + (isCrisis ? 0.16 : 0.22));
             osc.connect(gain);
             gain.connect(this.ctx.destination);
             osc.start(now);
-            osc.stop(now + 0.23);
-        }, 260);
+            osc.stop(now + (isCrisis ? 0.17 : 0.23));
+        };
+
+        this.bgmTimer = setInterval(tick, 220);
     },
     startAmbientLoop() {
         if (this.ambientNode || !this.ctx) return;
@@ -439,6 +492,16 @@ function addScore(points) {
     currentScore += Math.round(points * rewardMult);
     const el = document.getElementById('score-val');
     if (el) el.innerText = currentScore.toLocaleString();
+}
+
+function createStatusEffects() {
+    return {
+        burnTimer: 0,
+        burnTickAccum: 0,
+        shockTimer: 0,
+        frostTimer: 0,
+        vortexTimer: 0
+    };
 }
 
 // プレイヤー管理オブジェクト（キャラデザ・コンボ・必殺技・5種トークン配分・AIガンビット統合）
@@ -513,6 +576,9 @@ const player = {
     maxSp: 100,
     launchPct: 0,         // K-06『スマブラ』のふっとばし蓄積ダメージ％
     guardHoldTime: 0,     // B-1/B-2 ジャストシールド判定用（ガード開始からの経過秒数）
+    lastGuardPressTime: 0,// D-08 壁受身判定用
+    lastWallHitTime: 0,   // D-08 壁バウンド判定用
+    statusEffects: createStatusEffects(), // C-14 属性状態異常
     squashStretch: new THREE.Vector3(1, 1, 1), // G-9 扁平スケーリング
     position: new THREE.Vector3(-6.0, 0, 2.0),
     airY: 0,
@@ -540,6 +606,10 @@ const cpu = {
     bossInfo: CPU_BOSS_TYPES[0],
     archetype: "one_shot_buster",
     themeColor: 0xff4757,
+    vfxElement: "fire_orange",
+    aiStyle: "titan_bruiser",
+    lastWallHitTime: 0,
+    statusEffects: createStatusEffects(), // C-14 属性状態異常
     hp: 1000,
     maxHp: 1000,
     sp: 20,
@@ -940,8 +1010,15 @@ function createDaylightAnimeColosseum() {
     crownRing1.position.set(5.5, 46.5, 5.5);
     tower109Group.add(crownRing1);
 
-    // 大型街頭LEDビジョン画面 (14m × 8.5m)
-    const visionMat = new THREE.MeshBasicMaterial({ color: 0x00f2fe });
+    // 大型街頭LEDビジョン画面 (14m × 8.5m) — 109 リアルタイムバトル実況中継スクリーン
+    const visionCanvas = document.createElement('canvas');
+    visionCanvas.width = 512;
+    visionCanvas.height = 256;
+    const visionTexture = new THREE.CanvasTexture(visionCanvas);
+    visionTexture.colorSpace = THREE.SRGBColorSpace;
+    shibuyaBillboardTexture = visionTexture;
+    shibuyaBillboardCanvas = visionCanvas;
+    const visionMat = new THREE.MeshBasicMaterial({ map: visionTexture });
     const visionScreen = new THREE.Mesh(new THREE.PlaneGeometry(14.0, 8.5), visionMat);
     visionScreen.position.set(0, 21.0, 8.15);
     tower109Group.add(visionScreen);
@@ -1151,6 +1228,7 @@ function createDaylightAnimeColosseum() {
         });
     }
 
+    spawnCityJumpPads(envGroup);
     scene.add(envGroup);
 }
 
@@ -1225,6 +1303,9 @@ function spawnCityStreetProps(parentGroup) {
 function resolveCityBuildingCollisions(entity) {
     const px = entity.position.x;
     const pz = entity.position.z;
+    const isLaunched = (entity.state === "launched" || entity.state === "stunned");
+    const speed = entity.velocity ? entity.velocity.length() : 0;
+
     for (let i = 0; i < cityBuildingsColliderList.length; i++) {
         const b = cityBuildingsColliderList[i];
         const dx = px - b.x;
@@ -1232,10 +1313,56 @@ function resolveCityBuildingCollisions(entity) {
         if (Math.abs(dx) < b.hw && Math.abs(dz) < b.hd) {
             const overlapX = b.hw - Math.abs(dx);
             const overlapZ = b.hd - Math.abs(dz);
+            let normalX = 0, normalZ = 0;
+
             if (overlapX < overlapZ) {
                 entity.position.x += dx >= 0 ? overlapX : -overlapX;
+                normalX = dx >= 0 ? 1 : -1;
             } else {
                 entity.position.z += dz >= 0 ? overlapZ : -overlapZ;
+                normalZ = dz >= 0 ? 1 : -1;
+            }
+
+            // D-08『壁バウンド（Wall Bounce）＆ 壁受身（Wall Tech）』
+            if (isLaunched && speed > 5.5 && (performance.now() - (entity.lastWallHitTime || 0)) > 420) {
+                entity.lastWallHitTime = performance.now();
+                const isPlayer = (entity === player);
+
+                // 受身判定:
+                // プレイヤー: ガードキー押下中、または直前0.22s以内の入力
+                // CPU: ボスAIおよび悪魔の釜ホンキ度に応じた確率 (25%〜50%)
+                const isTeched = isPlayer
+                    ? (input.guard || (performance.now() - (player.lastGuardPressTime || 0) < 240))
+                    : (Math.random() < (0.28 + (sakuraiParams.cauldronIntensity - 1.0) * 0.03));
+
+                if (isTeched) {
+                    // ⚡ 壁受身成功（Wall Tech）
+                    SoundEngine.play('justguard');
+                    spawnHitSparks(entity.position, 0x00f2fe, 32);
+                    spawnDamageNumber(entity.position.x, entity.position.y + 1.2, entity.position.z, "TECH!", "buff", "⚡受身成功！");
+                    showAnnouncement(isPlayer ? "⚡ 壁受身（WALL TECH）成功！即座に復帰！" : "⚡ 敵が壁受身で体勢を立て直した！", "#00f2fe");
+                    entity.state = "idle";
+                    entity.airVelY = 5.5; // 壁キックで跳ね上がる
+                    entity.velocity.set(normalX * 6.5, 0, normalZ * 6.5);
+                    entity.isInvincible = true;
+                    setTimeout(() => { if (entity.state !== "special") entity.isInvincible = false; }, 320);
+                } else {
+                    // 💥 壁激突バウンド（Wall Bounce）
+                    const wallDmg = Math.round(speed * 3.6);
+                    SoundEngine.play('explode');
+                    cameraShakeIntensity = 0.42;
+                    spawnHitSparks(entity.position, 0xdfe6e9, 36);
+                    spawnGroundSlamVFX(entity.position, 0xff4757, 1.15);
+                    triggerDefenderFlashing(entity);
+                    spawnDamageNumber(entity.position.x, entity.position.y + 1.2, entity.position.z, wallDmg, "crit", "💥壁激突！");
+                    applyDamage(isPlayer ? 'player' : 'cpu', wallDmg);
+
+                    // 跳ね返り物理反発
+                    if (normalX !== 0) entity.velocity.x = normalX * Math.abs(entity.velocity.x) * 0.65;
+                    if (normalZ !== 0) entity.velocity.z = normalZ * Math.abs(entity.velocity.z) * 0.65;
+                    entity.airVelY = Math.max(entity.airVelY, 4.2);
+                    hitStopTimer = 0.075 * sakuraiParams.hitStopScale;
+                }
             }
         }
     }
@@ -2912,6 +3039,27 @@ function addCombo(hits, damage) {
     document.getElementById('combo-hits-left').innerText = comboHits;
     document.getElementById('combo-damage-num').innerText = comboDamage;
 
+    // C-24『ほめる！』コンボスタイルランク算出 (COOL / GREAT / EXCELLENT / SSS SAKURAI SICK)
+    const styleEl = document.getElementById('combo-style-rank');
+    if (styleEl) {
+        styleEl.className = 'combo-style-rank';
+        if (comboHits >= 7) {
+            styleEl.innerText = '🔥 SSS SAKURAI SICK! 🔥';
+            styleEl.classList.add('rank-sick');
+            if (comboHits === 7) SoundEngine.play('cheer');
+        } else if (comboHits >= 5) {
+            styleEl.innerText = '⚡ EXCELLENT!!';
+            styleEl.classList.add('rank-excellent');
+            if (comboHits === 5) SoundEngine.play('cheer');
+        } else if (comboHits >= 3) {
+            styleEl.innerText = '✨ GREAT!';
+            styleEl.classList.add('rank-great');
+        } else {
+            styleEl.innerText = '💨 COOL';
+            styleEl.classList.add('rank-cool');
+        }
+    }
+
     rightDisp.classList.add('active');
     leftDisp.classList.add('active');
 
@@ -2988,6 +3136,16 @@ function handlePlayerActionInput(action, subType = null) {
 }
 
 function executePlayerAction(action, subType) {
+    if (player.state === "down") {
+        if (action === 'attack') {
+            performPlayerGetupAttack();
+            return;
+        } else if (action === 'dodge' || action === 'jump') {
+            performPlayerTechRoll();
+            return;
+        }
+        return;
+    }
     if (action === 'attack') performPlayerAttack(subType || 'rush');
     else if (action === 'arts') performSkillArts();
     else if (action === 'special') performPlayerSpecial();
@@ -3141,6 +3299,7 @@ function performPlayerAttack(subType = "rush") {
         }
 
         applyDamage('cpu', finalDmg);
+        applyElementalStatus(player, cpu, finalDmg);
         addCombo(1, finalDmg);
         player.sp = Math.min(player.maxSp, player.sp + Math.round(10 * (player.spRegenMult || 1.0)));
         updateGauges();
@@ -3214,6 +3373,7 @@ function performSkillArts() {
                 spawnHitSparks(cpu.position, i % 2 === 0 ? pal.main : pal.sub, 32);
                 spawnDamageNumber(cpu.position.x, cpu.position.y + cpu.airY, cpu.position.z, hitDmg, "crit", "SKILL!");
                 applyDamage('cpu', hitDmg);
+                applyElementalStatus(player, cpu, hitDmg);
                 addCombo(1, hitDmg);
                 addScore(Math.round(hitDmg * 2 * getCauldronMultipliers().rewardMult));
                 cameraShakeIntensity = 0.28;
@@ -3260,6 +3420,7 @@ function performPlayerSpecial() {
     document.getElementById('cutin-char').innerText = player.design.name;
     document.getElementById('cutin-skill').innerText = player.skillName;
     cutin.classList.add('active');
+    triggerUltimateCutin();
 
     const archMult = getArchetypeMultiplier(player.archetype, cpu.archetype);
     const executeMult = (ultTrait === "execute_bonus" && cpu.hp <= cpu.maxHp * 0.5) ? 1.50 : 1.0;
@@ -3302,6 +3463,7 @@ function performPlayerSpecial() {
                 const prefix = executeMult > 1 ? "💀処刑1.5x!" : (i === hitCount - 1 ? "FINISH!!" : "EX!");
                 spawnDamageNumber(cpu.position.x, cpu.position.y + cpu.airY, cpu.position.z, partDmg, "crit", prefix);
                 applyDamage('cpu', partDmg);
+                applyElementalStatus(player, cpu, partDmg);
                 addCombo(1, partDmg);
                 addScore(Math.round(partDmg * 3 * getCauldronMultipliers().rewardMult));
 
@@ -3367,6 +3529,586 @@ function performPlayerJump() {
     player.stateTimer = 0.55;
     lastFrameDataText = `🦘ジャンプ飛躍 [踏切 3F / 初速上昇 8.2m/s]`;
     spawnFootstepDust(player.position, 1.6);
+}
+
+// ========================================================
+// C-14 属性リアクション・状態異常システム (Elemental Status Effects)
+// ========================================================
+function applyElementalStatus(attacker, target, baseDmg) {
+    if (!attacker || !target || !target.statusEffects) return;
+    const elem = attacker.vfxElement || "plasma_cyan";
+
+    if (elem === "flame_crimson" || elem === "fire_orange") {
+        target.statusEffects.burnTimer = 3.2;
+        target.statusEffects.burnTickAccum = 0;
+        showAnnouncement("🔥 炎上 (BURNING) 付与！", "#ff6b6b");
+    } else if (elem === "plasma_cyan" || elem === "thunder_cyan") {
+        target.statusEffects.shockTimer = 2.4;
+        showAnnouncement("⚡ 感電 (SHOCK) 付与！", "#00f2fe");
+    } else if (elem === "holy_astral" || elem === "ice_blue") {
+        target.statusEffects.frostTimer = 3.0;
+        showAnnouncement("❄️ 凍結 (FROST SLOW) 付与！", "#70a1ff");
+    } else if (elem === "void_gravity" || elem === "dark_purple") {
+        target.statusEffects.vortexTimer = 2.0;
+        showAnnouncement("🌀 重力渦 (GRAVITY VORTEX) 付与！", "#a29bfe");
+    }
+}
+
+function updateStatusEffects(entity, targetEntity, dt, isPlayer) {
+    if (!entity || !entity.statusEffects || !isGameActive) return;
+    const eff = entity.statusEffects;
+
+    // 🔥 炎上 (DoTスリップダメージ)
+    if (eff.burnTimer > 0) {
+        eff.burnTimer = Math.max(0, eff.burnTimer - dt);
+        eff.burnTickAccum += dt;
+        if (eff.burnTickAccum >= 0.8) {
+            eff.burnTickAccum = 0;
+            const burnDmg = 14;
+            entity.hp = Math.max(0, entity.hp - burnDmg);
+            spawnHitSparks(entity.position, 0xff4757, 10);
+            spawnDamageNumber(entity.position.x, entity.position.y + 1.2, entity.position.z, burnDmg, "crit", "🔥炎上");
+            updateGauges();
+            if (entity.hp <= 0 && isGameActive) {
+                if (isPlayer) handleGameOver();
+                else { triggerFinishZoom(); handleVictory(); }
+            }
+        }
+    }
+
+    // ⚡ 感電 (マイクロ硬直)
+    if (eff.shockTimer > 0) {
+        eff.shockTimer = Math.max(0, eff.shockTimer - dt);
+        if (Math.random() < 0.25) {
+            spawnHitSparks(entity.position, 0x00f2fe, 6);
+        }
+    }
+
+    // ❄️ 凍結 (移動・行動速度40%低下)
+    if (eff.frostTimer > 0) {
+        eff.frostTimer = Math.max(0, eff.frostTimer - dt);
+        if (Math.random() < 0.20) {
+            spawnHitSparks(entity.position, 0x70a1ff, 5);
+        }
+    }
+
+    // 🌀 重力渦 (攻撃者へ吸い寄せ)
+    if (eff.vortexTimer > 0) {
+        eff.vortexTimer = Math.max(0, eff.vortexTimer - dt);
+        if (targetEntity) {
+            const pullDir = new THREE.Vector3().subVectors(targetEntity.position, entity.position).normalize();
+            entity.velocity.add(pullDir.multiplyScalar(4.2 * dt));
+            if (Math.random() < 0.25) spawnHitSparks(entity.position, 0xa29bfe, 8);
+        }
+    }
+}
+
+function updateStatusEffectsHUD() {
+    renderStatusPills('player-status-bar', player.statusEffects);
+    renderStatusPills('cpu-status-bar', cpu.statusEffects);
+    renderStatusPills('ew-status-bar', cpu.statusEffects);
+}
+
+function renderStatusPills(containerId, eff) {
+    const el = document.getElementById(containerId);
+    if (!el || !eff) return;
+    let html = '';
+    if (eff.burnTimer > 0) html += `<span class="status-pill burn">🔥 炎上 ${eff.burnTimer.toFixed(1)}s</span>`;
+    if (eff.shockTimer > 0) html += `<span class="status-pill shock">⚡ 感電 ${eff.shockTimer.toFixed(1)}s</span>`;
+    if (eff.frostTimer > 0) html += `<span class="status-pill frost">❄️ 凍結 ${eff.frostTimer.toFixed(1)}s</span>`;
+    if (eff.vortexTimer > 0) html += `<span class="status-pill vortex">🌀 重力 ${eff.vortexTimer.toFixed(1)}s</span>`;
+    el.innerHTML = html;
+}
+
+// ========================================================
+// K-02『画面外ルーペ＆レーダーバブル』(Off-screen Magnifier)
+// ========================================================
+function updateOffscreenLoupe() {
+    if (!camera || !isGameActive) return;
+
+    const halfW = window.innerWidth / 2;
+    const halfH = window.innerHeight / 2;
+    const margin = 52;
+    const maxX = halfW - margin;
+    const maxY = halfH - margin;
+
+    const updateEntityLoupe = (entity, bubbleId, arrowId, pctId) => {
+        const bubbleEl = document.getElementById(bubbleId);
+        if (!bubbleEl || !entity || !entity.position) return;
+
+        const pos3d = entity.position.clone().add(new THREE.Vector3(0, 1.2 + (entity.airY || 0), 0));
+        const ndc = pos3d.project(camera);
+
+        const isOffscreen = (ndc.z > 1.0) || (Math.abs(ndc.x) > 0.88) || (Math.abs(ndc.y) > 0.82);
+
+        if (!isOffscreen || entity.hp <= 0) {
+            bubbleEl.style.display = 'none';
+            return;
+        }
+
+        bubbleEl.style.display = 'flex';
+
+        let dirX = ndc.x;
+        let dirY = -ndc.y;
+        if (ndc.z > 1.0) {
+            dirX = -dirX;
+            dirY = -dirY;
+        }
+        const len = Math.hypot(dirX, dirY) || 0.001;
+        const normX = dirX / len;
+        const normY = dirY / len;
+
+        const scaleX = maxX / (Math.abs(normX) || 0.001);
+        const scaleY = maxY / (Math.abs(normY) || 0.001);
+        const scale = Math.min(scaleX, scaleY);
+
+        const screenX = halfW + normX * scale;
+        const screenY = halfH + normY * scale;
+
+        bubbleEl.style.left = `${screenX}px`;
+        bubbleEl.style.top = `${screenY}px`;
+
+        const arrowEl = document.getElementById(arrowId);
+        if (arrowEl) {
+            const angleDeg = Math.atan2(normY, normX) * (180 / Math.PI) - 90;
+            arrowEl.style.transform = `rotate(${angleDeg}deg)`;
+        }
+
+        const pctEl = document.getElementById(pctId);
+        if (pctEl) pctEl.innerText = `${entity.launchPct || 0}%`;
+    };
+
+    updateEntityLoupe(player, 'loupe-player', 'loupe-arrow-player', 'loupe-pct-player');
+    updateEntityLoupe(cpu, 'loupe-cpu', 'loupe-arrow-cpu', 'loupe-pct-cpu');
+}
+
+// ========================================================
+// 3D必殺奥義シネマティック・カットイン演出
+// ========================================================
+function triggerUltimateCutin() {
+    const cutinLayer = document.getElementById('ultimate-cutin-layer');
+    if (!cutinLayer) return;
+
+    const subEl = document.getElementById('cutin-sub');
+    const titleEl = document.getElementById('cutin-title');
+    const userEl = document.getElementById('cutin-user');
+    if (subEl) subEl.innerText = `💥 ULTIMATE BURST EX (${ARCHETYPE_INFO[player.archetype]?.label || '武芸伝承'}) 💥`;
+    if (titleEl) titleEl.innerText = player.skillName || "滅・次元絶影撃";
+    if (userEl) userEl.innerText = player.design.name || "PLAYER";
+
+    const portraitCanvas = document.getElementById('cutin-avatar-canvas');
+    if (portraitCanvas) {
+        const ctx = portraitCanvas.getContext('2d');
+        ctx.clearRect(0, 0, 220, 220);
+        ctx.fillStyle = player.design.outfitColor || '#020617';
+        ctx.fillRect(0, 0, 220, 220);
+
+        ctx.strokeStyle = '#ffd32a';
+        ctx.lineWidth = 2.5;
+        for (let a = 0; a < Math.PI * 2; a += Math.PI / 8) {
+            ctx.beginPath();
+            ctx.moveTo(110, 110);
+            ctx.lineTo(110 + Math.cos(a) * 120, 110 + Math.sin(a) * 120);
+            ctx.stroke();
+        }
+
+        ctx.fillStyle = player.design.hairColor || '#00f2fe';
+        ctx.beginPath();
+        ctx.arc(110, 105, 52, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.fillStyle = '#fff';
+        ctx.shadowColor = '#00f2fe';
+        ctx.shadowBlur = 10;
+        ctx.fillRect(84, 100, 20, 6);
+        ctx.fillRect(116, 100, 20, 6);
+    }
+
+    cutinLayer.style.display = 'flex';
+    setTimeout(() => {
+        cutinLayer.style.display = 'none';
+    }, 650);
+}
+
+// ========================================================
+// D-14『ダウン追撃＆起き上がり攻防』(Tech Roll & Getup Attack)
+// ========================================================
+function performPlayerTechRoll() {
+    if (player.state !== "down") return;
+    player.state = "dodge";
+    player.stateDuration = 0.42;
+    player.stateTimer = 0.42;
+    player.isInvincible = true;
+
+    // 入力方向または敵から遠ざかる方向へローリング
+    let rollDir = new THREE.Vector3(input.x, 0, input.z);
+    if (rollDir.lengthSq() < 0.1) {
+        rollDir.subVectors(player.position, cpu.position).setY(0).normalize();
+        if (rollDir.lengthSq() < 0.01) rollDir.set(0, 0, 1);
+    } else {
+        rollDir.normalize();
+    }
+    player.velocity.copy(rollDir.multiplyScalar(9.5));
+    player.rotationY = Math.atan2(rollDir.x, rollDir.z);
+
+    SoundEngine.play('techroll');
+    spawnFootstepDust(player.position, 2.2);
+    spawnDamageNumber(player.position.x, player.position.y + 0.6, player.position.z, "TECH ROLL!", "crit", "🌀受身転がり");
+    setTimeout(() => { player.isInvincible = false; }, 420);
+}
+
+function performPlayerGetupAttack() {
+    if (player.state !== "down") return;
+    player.state = "attack";
+    player.stateDuration = 0.45;
+    player.stateTimer = 0.45;
+    player.isInvincible = true;
+
+    SoundEngine.play('smash');
+    spawnGroundSlamVFX(player.position, 0x00f2fe, 1.25);
+    spawnFootstepDust(player.position, 2.0);
+    spawnDamageNumber(player.position.x, player.position.y + 0.6, player.position.z, "GETUP ATTACK!", "crit", "⚔️起き上がり回転");
+
+    const toCpu = new THREE.Vector3().subVectors(cpu.position, player.position);
+    const dist = toCpu.length();
+    if (dist < 3.2) {
+        SoundEngine.play('hit');
+        const dmg = Math.round(42 * player.atkScale);
+        cpu.launchPct = Math.min(999, cpu.launchPct + 8);
+        cpu.velocity.add(toCpu.normalize().multiplyScalar(10.0));
+        cpu.airVelY = 3.8;
+        cpu.state = "stunned";
+        cpu.stateDuration = 0.55;
+        cpu.stateTimer = 0.55;
+        triggerDefenderFlashing(cpu);
+        spawnHitSparks(cpu.position, 0x00f2fe, 30);
+        spawnDamageNumber(cpu.position.x, cpu.position.y + cpu.airY, cpu.position.z, dmg, "stun", "SWEEP!");
+        applyDamage('cpu', dmg);
+        applyElementalStatus(player, cpu, dmg);
+        addCombo(1, dmg);
+    }
+    setTimeout(() => { player.isInvincible = false; }, 450);
+}
+
+// ========================================================
+// 渋谷 109 大型街頭LEDビジョン ＆ 地下鉄通気口ジャンプパッド
+// ========================================================
+function spawnCityJumpPads(parentGroup) {
+    cityJumpPads = [];
+    const padLocations = [
+        { x:  9.5, z:  9.5, label: "南東交差点" },
+        { x: -9.5, z:  9.5, label: "南西交差点" },
+        { x: -9.5, z: -9.5, label: "北西交差点 (109前)" },
+        { x:  9.5, z: -9.5, label: "北東交差点" }
+    ];
+
+    const grateMat = new THREE.MeshStandardMaterial({
+        color: 0x1f2937,
+        roughness: 0.5,
+        metalness: 0.8
+    });
+    const hazardMat = new THREE.MeshBasicMaterial({ color: 0xffbe0b });
+    const steamGlowMat = new THREE.MeshBasicMaterial({
+        color: 0x00f2fe,
+        transparent: true,
+        opacity: 0.45
+    });
+
+    padLocations.forEach(loc => {
+        const padGroup = new THREE.Group();
+        padGroup.position.set(loc.x, 0.04, loc.z);
+
+        // 地下鉄通気口格子メッシュ (2.8m × 2.8m)
+        const grateMesh = new THREE.Mesh(new THREE.BoxGeometry(2.8, 0.08, 2.8), grateMat);
+        padGroup.add(grateMesh);
+
+        // 四方の黄色警告ライン
+        const hazardBorder = new THREE.Mesh(
+            new THREE.RingGeometry(1.4, 1.55, 4),
+            hazardMat
+        );
+        hazardBorder.rotation.x = -Math.PI / 2;
+        hazardBorder.rotation.z = Math.PI / 4;
+        hazardBorder.position.y = 0.05;
+        padGroup.add(hazardBorder);
+
+        // 上昇気流グロー平面
+        const steamPlane = new THREE.Mesh(new THREE.PlaneGeometry(2.4, 2.4), steamGlowMat);
+        steamPlane.rotation.x = -Math.PI / 2;
+        steamPlane.position.y = 0.06;
+        padGroup.add(steamPlane);
+
+        parentGroup.add(padGroup);
+
+        cityJumpPads.push({
+            x: loc.x,
+            z: loc.z,
+            radius: 1.55,
+            group: padGroup,
+            steamPlane: steamPlane
+        });
+    });
+}
+
+function updateCityJumpPads(dt) {
+    if (!cityJumpPads.length) return;
+
+    // 気流グローの明滅アニメーション
+    const pulseOpacity = 0.35 + Math.sin(elapsedTime * 4.5) * 0.18;
+    cityJumpPads.forEach(pad => {
+        if (pad.steamPlane) pad.steamPlane.material.opacity = pulseOpacity;
+    });
+
+    // プレイヤーおよびCPUが乗った時のハイジャンプ気流噴射判定
+    [player, cpu].forEach(ent => {
+        if (ent.airY > 0.45) return; // 既に上空にいる場合は重複踏み防止
+        const now = performance.now();
+        if (ent.lastJumpPadTime && now - ent.lastJumpPadTime < 950) return;
+
+        for (let i = 0; i < cityJumpPads.length; i++) {
+            const pad = cityJumpPads[i];
+            const dist = Math.hypot(ent.position.x - pad.x, ent.position.z - pad.z);
+            if (dist < pad.radius) {
+                ent.lastJumpPadTime = now;
+                ent.airVelY = 16.8 * sakuraiParams.launchBaseScale;
+                ent.airY = 0.25;
+                if (ent.state !== "attack" && ent.state !== "special") {
+                    ent.state = "jump";
+                    ent.stateDuration = 0.65;
+                    ent.stateTimer = 0.65;
+                }
+                SoundEngine.play('jumppad');
+                cameraShakeIntensity = 0.22;
+                spawnDamageNumber(ent.position.x, ent.position.y + 1.2, ent.position.z, "HIGH JUMP!!", "crit", "💨地下鉄通気口");
+
+                // 上昇蒸気パーティクル噴射
+                for (let p = 0; p < 18; p++) {
+                    const sparkGeo = new THREE.SphereGeometry(0.12 + Math.random() * 0.15, 6, 6);
+                    const sparkMat = new THREE.MeshBasicMaterial({ color: 0x81ecec, transparent: true, opacity: 0.85 });
+                    const spMesh = new THREE.Mesh(sparkGeo, sparkMat);
+                    spMesh.position.set(
+                        pad.x + (Math.random() - 0.5) * 2.2,
+                        0.2 + Math.random() * 0.5,
+                        pad.z + (Math.random() - 0.5) * 2.2
+                    );
+                    scene.add(spMesh);
+                    effectsList.push({
+                        mesh: spMesh,
+                        life: 0.55,
+                        maxLife: 0.55,
+                        vel: new THREE.Vector3((Math.random() - 0.5) * 1.5, 9.5 + Math.random() * 7.0, (Math.random() - 0.5) * 1.5),
+                        update(subDt, self) {
+                            self.mesh.position.addScaledVector(self.vel, subDt);
+                            self.mesh.material.opacity = Math.max(0, self.life / self.maxLife * 0.8);
+                        }
+                    });
+                }
+                break;
+            }
+        }
+    });
+}
+
+function update109Billboard(dt) {
+    if (!shibuyaBillboardCanvas || !shibuyaBillboardTexture) return;
+    billboardUpdateTimer += dt;
+    if (billboardUpdateTimer < 0.08) return; // 12-15 FPS で更新（十分滑らかで軽量）
+    billboardUpdateTimer = 0;
+
+    const canvas = shibuyaBillboardCanvas;
+    const ctx = canvas.getContext('2d');
+    const W = canvas.width;
+    const H = canvas.height;
+
+    // 背景：ダークサイバーブルー ＆ グリッドスキャンライン
+    ctx.fillStyle = '#0a0e17';
+    ctx.fillRect(0, 0, W, H);
+
+    ctx.fillStyle = 'rgba(0, 242, 254, 0.06)';
+    for (let y = 0; y < H; y += 8) {
+        ctx.fillRect(0, y, W, 1);
+    }
+
+    // ネオンヘッダー枠
+    ctx.strokeStyle = '#00f2fe';
+    ctx.lineWidth = 4;
+    ctx.strokeRect(6, 6, W - 12, H - 12);
+
+    // ヘッダーテキスト
+    ctx.fillStyle = '#ff2a85';
+    ctx.font = 'bold 22px sans-serif';
+    ctx.fillText('🔴 LIVE 渋谷スクランブル交差点 バトル速報', 20, 36);
+
+    // プレイヤー側
+    ctx.fillStyle = '#00f2fe';
+    ctx.font = 'bold 18px sans-serif';
+    ctx.fillText(player.design.name || 'PLAYER', 20, 72);
+    // プレイヤーHPバー
+    ctx.fillStyle = '#1e293b';
+    ctx.fillRect(20, 80, 200, 16);
+    const pRatio = Math.max(0, Math.min(1, player.hp / player.maxHp));
+    ctx.fillStyle = pRatio < 0.3 ? '#ff4757' : '#00f2fe';
+    ctx.fillRect(20, 80, 200 * pRatio, 16);
+
+    // CPUボス側
+    ctx.fillStyle = '#ffbe0b';
+    ctx.font = 'bold 18px sans-serif';
+    const bossName = cpu.bossInfo?.name || 'BOSS';
+    ctx.fillText(bossName, 280, 72);
+    // CPU HPバー
+    ctx.fillStyle = '#1e293b';
+    ctx.fillRect(280, 80, 200, 16);
+    const cRatio = Math.max(0, Math.min(1, cpu.hp / cpu.maxHp));
+    ctx.fillStyle = '#ff4757';
+    ctx.fillRect(280, 80, 200 * cRatio, 16);
+
+    // 中央ダイナミックステータス・実況
+    ctx.textAlign = 'center';
+    if (comboHits >= 3) {
+        ctx.fillStyle = '#ffd32a';
+        ctx.font = 'italic 900 32px sans-serif';
+        const rankText = comboHits >= 7 ? 'SSS SAKURAI SICK!' : (comboHits >= 5 ? 'EXCELLENT!!' : 'GREAT!');
+        ctx.fillText(`🔥 ${comboHits} HITS! [${rankText}]`, W * 0.5, 145);
+    } else if (cpu.state === "down") {
+        ctx.fillStyle = '#ff5e57';
+        ctx.font = 'bold 28px sans-serif';
+        ctx.fillText('💥 DOWN! 起き上がり攻防中!', W * 0.5, 145);
+    } else if (player.hp <= player.maxHp * 0.35) {
+        ctx.fillStyle = '#ff3838';
+        ctx.font = 'bold 28px sans-serif';
+        ctx.fillText('⚠️ DANGER! ピンチ怒りブースト発動!', W * 0.5, 145);
+    } else {
+        ctx.fillStyle = '#e2e8f0';
+        ctx.font = 'bold 24px sans-serif';
+        ctx.fillText(`ROUND ${currentWins + 1} | ホンキ度 ${sakuraiParams.cauldronIntensity.toFixed(1)}`, W * 0.5, 145);
+    }
+    ctx.textAlign = 'left';
+
+    // 画面下部：周波数イコライザー波形（戦闘の激しさに連動）
+    const barCount = 28;
+    const barWidth = 14;
+    const startX = 40;
+    const baseY = 230;
+    for (let i = 0; i < barCount; i++) {
+        const freqH = Math.sin(elapsedTime * 8 + i * 0.5) * 14 + 18;
+        ctx.fillStyle = (i % 2 === 0) ? '#ff2a85' : '#00f2fe';
+        ctx.fillRect(startX + i * 16, baseY - freqH, barWidth, freqH);
+    }
+
+    // テクスチャ更新フラグ
+    shibuyaBillboardTexture.needsUpdate = true;
+}
+
+// ========================================================
+// 🕸️ グラフエンジニアリング × 🔄 ループエンジニアリング 自律進化ラボ
+// ========================================================
+function runAutonomousMetaSimulation() {
+    const canvas = document.getElementById('graph-dag-canvas');
+    const adviceEl = document.getElementById('sim-meta-advice');
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    const W = canvas.width;
+    const H = canvas.height;
+
+    SoundEngine.play('patch');
+    if (adviceEl) adviceEl.innerText = "⚡ 100戦自律対戦シミュレーション演算中... (モンテカルロ評価中)";
+
+    const builds = [
+        { name: "🔴剛撃重装", id: "power", x: 120, y: 70, color: "#ff4757", wins: 0, total: 0 },
+        { name: "🔵蒼迅神速", id: "speed", x: 260, y: 160, color: "#00f2fe", wins: 0, total: 0 },
+        { name: "💚堅守要塞", id: "def",   x: 440, y: 160, color: "#2ed573", wins: 0, total: 0 },
+        { name: "🟣魔導牽制", id: "magic", x: 580, y: 70, color: "#9b59b6", wins: 0, total: 0 },
+        { name: "🟡覇道連撃", id: "combo", x: 350, y: 50, color: "#ffa502", wins: 0, total: 0 }
+    ];
+
+    const matchMatrix = {
+        power: { speed: 0.65, def: 0.35, magic: 0.40, combo: 0.60 },
+        speed: { power: 0.35, def: 0.70, magic: 0.65, combo: 0.45 },
+        def:   { power: 0.65, speed: 0.30, magic: 0.35, combo: 0.70 },
+        magic: { power: 0.60, speed: 0.35, def: 0.65, combo: 0.40 },
+        combo: { power: 0.40, speed: 0.55, def: 0.30, magic: 0.60 }
+    };
+
+    for (let i = 0; i < 100; i++) {
+        const bA = builds[Math.floor(Math.random() * builds.length)];
+        let bB = builds[Math.floor(Math.random() * builds.length)];
+        while (bA === bB) bB = builds[Math.floor(Math.random() * builds.length)];
+
+        const pA = matchMatrix[bA.id][bB.id] || 0.5;
+        const winA = Math.random() < pA;
+        bA.total++;
+        bB.total++;
+        if (winA) bA.wins++;
+        else bB.wins++;
+    }
+
+    ctx.clearRect(0, 0, W, H);
+
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.05)";
+    ctx.lineWidth = 1;
+    for (let x = 0; x < W; x += 40) {
+        ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
+    }
+    for (let y = 0; y < H; y += 40) {
+        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
+    }
+
+    const edges = [
+        ["power", "speed"], ["speed", "def"], ["def", "power"],
+        ["speed", "magic"], ["magic", "def"], ["magic", "power"],
+        ["def", "combo"], ["combo", "magic"], ["power", "combo"]
+    ];
+
+    edges.forEach(([fromId, toId]) => {
+        const fromNode = builds.find(b => b.id === fromId);
+        const toNode = builds.find(b => b.id === toId);
+        if (!fromNode || !toNode) return;
+
+        ctx.strokeStyle = "rgba(0, 242, 254, 0.45)";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(fromNode.x, fromNode.y);
+        ctx.lineTo(toNode.x, toNode.y);
+        ctx.stroke();
+
+        const mx = (fromNode.x + toNode.x) / 2;
+        const my = (fromNode.y + toNode.y) / 2;
+        const angle = Math.atan2(toNode.y - fromNode.y, toNode.x - fromNode.x);
+        ctx.fillStyle = "#ffd32a";
+        ctx.beginPath();
+        ctx.moveTo(mx + Math.cos(angle) * 8, my + Math.sin(angle) * 8);
+        ctx.lineTo(mx + Math.cos(angle + 2.5) * 6, my + Math.sin(angle + 2.5) * 6);
+        ctx.lineTo(mx + Math.cos(angle - 2.5) * 6, my + Math.sin(angle - 2.5) * 6);
+        ctx.fill();
+    });
+
+    let bestBuild = builds[0];
+    builds.forEach(b => {
+        const winRate = b.total > 0 ? Math.round((b.wins / b.total) * 100) : 50;
+        if (winRate > (bestBuild.total > 0 ? Math.round((bestBuild.wins / bestBuild.total) * 100) : 0)) {
+            bestBuild = b;
+        }
+
+        ctx.fillStyle = b.color;
+        ctx.beginPath();
+        ctx.arc(b.x, b.y, 22, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.lineWidth = 3;
+        ctx.strokeStyle = "#fff";
+        ctx.stroke();
+
+        ctx.fillStyle = "#fff";
+        ctx.font = "bold 11px sans-serif";
+        ctx.textAlign = "center";
+        ctx.fillText(b.name, b.x, b.y - 28);
+        ctx.fillText(`${winRate}%`, b.x, b.y + 4);
+    });
+
+    const bestRate = Math.round((bestBuild.wins / bestBuild.total) * 100);
+    const currBoss = cpu.bossInfo ? cpu.bossInfo.name : "現ボス";
+    if (adviceEl) {
+        adviceEl.innerHTML = `💡 【100戦自律進化解析結果】: 現在のメタ勝率Topは <strong>${bestBuild.name} (${bestRate}%)</strong> です！<br>対「${currBoss}」には【${bestBuild.name}＋剛撃3】の特化構成が最適解として学習されました。`;
+    }
 }
 
 // ========================================================
@@ -3582,6 +4324,10 @@ function spawnNextCpu() {
     const cauldron = getCauldronMultipliers();
     cpu.bossInfo = boss;
     cpu.archetype = boss.archetype || "one_shot_buster";
+    cpu.vfxElement = boss.vfxElement || "fire_orange";
+    cpu.aiStyle = boss.aiStyle || "titan_bruiser";
+    cpu.statusEffects = createStatusEffects();
+    player.statusEffects = createStatusEffects();
     cpu.maxHp = Math.round(1000 * Math.pow(1.08, currentWins) * cauldron.enemyHpMult);
     cpu.hp = cpu.maxHp;
     cpu.maxPoise = Math.round(boss.poiseMax * Math.pow(1.04, currentWins));
@@ -3645,6 +4391,7 @@ function spawnNextCpu() {
     setupCpuBossModel(boss);
     spawnGroundSlamVFX(cpu.position, boss.accentColor, 1.2);
     updateGauges();
+    updateStatusEffectsHUD();
     isGameActive = true;
 
     // L-5『参戦ムービー』スプラッシュ表示
@@ -4009,7 +4756,41 @@ function updatePlayerAutoAI(dt) {
  * 索敵範囲(26m)外では渋谷の大通りをウロウロとパトロールし、索敵範囲に入ると「❗発見!」ポップアップ＆効果音とともに追尾・戦闘へ遷移！
  */
 function updateCpuAI(dt) {
-    if (!isGameActive || cpu.state === "down") return;
+    if (!isGameActive) return;
+
+    // D-14『ダウン追撃＆起き上がり攻防』：CPUダウン時の受身転がり or 起き上がり回転攻撃
+    if (cpu.state === "down") {
+        cpu.isGuarding = false;
+        if (cpu.stateTimer > 0 && cpu.stateTimer < 0.52) {
+            const dist = cpu.position.distanceTo(player.position);
+            if (dist < 3.2 && Math.random() < 0.45) {
+                // CPU起き上がり足払い攻撃
+                cpu.state = "attack";
+                cpu.stateDuration = 0.42;
+                cpu.stateTimer = 0.42;
+                SoundEngine.play('smash');
+                spawnGroundSlamVFX(cpu.position, 0xff4757, 1.2);
+                spawnDamageNumber(cpu.position.x, 0.8, cpu.position.z, "GETUP ATTACK!", "crit", "⚔️CPU起き上がり");
+                if (dist < 3.0 && !player.isInvincible) {
+                    const dmg = Math.round(36 * (cpu.atkScale || 1.0));
+                    applyDamage('player', dmg);
+                    spawnDamageNumber(player.position.x, player.position.y + 1.2, player.position.z, dmg, "stun", "SWEEP!");
+                }
+            } else {
+                // CPU起き上がり受身転がり
+                const backDir = new THREE.Vector3().subVectors(cpu.position, player.position).setY(0).normalize();
+                if (backDir.lengthSq() < 0.1) backDir.set(0, 0, 1);
+                cpu.velocity.copy(backDir.multiplyScalar(7.5));
+                cpu.state = "dodge";
+                cpu.stateDuration = 0.36;
+                cpu.stateTimer = 0.36;
+                SoundEngine.play('techroll');
+                spawnFootstepDust(cpu.position, 2.0);
+                spawnDamageNumber(cpu.position.x, 0.8, cpu.position.z, "TECH ROLL!", "crit", "🌀受身転がり");
+            }
+        }
+        return;
+    }
 
     // 体幹自然回復
     cpu.poise = Math.min(cpu.maxPoise, cpu.poise + 8.0 * dt);
@@ -4064,21 +4845,72 @@ function updateCpuAI(dt) {
     const atkScale = Math.pow(1.05, currentWins) * getArchetypeMultiplier(cpu.archetype, player.archetype);
 
     if (cpu.aiTimer <= 0) {
-        cpu.aiTimer = Math.max(0.28, 0.62 - currentWins * 0.02) + Math.random() * 0.25;
-        if (dist > 3.1) {
-            cpu.aiAction = "chase";
-            cpu.aiMode = "chase";
+        cpu.aiTimer = Math.max(0.25, 0.55 - currentWins * 0.02) + Math.random() * 0.22;
+        const style = cpu.aiStyle || "titan_bruiser";
+
+        if (style === "sorceress_zoner") {
+            // 魔導のセラフィナ: 距離7m以下なら後退・離脱、7〜16mなら魔弾、それ以上なら接近
+            if (dist < 7.0) {
+                cpu.aiAction = "retreat";
+                cpu.aiMode = "combat";
+            } else if (dist > 16.0) {
+                cpu.aiAction = "chase";
+                cpu.aiMode = "chase";
+            } else {
+                cpu.aiAction = "magic";
+                cpu.aiMode = "combat";
+            }
+        } else if (style === "phantom_skirmisher") {
+            // 影走のシルフ: 3連撃後に素早く横ステップ離脱
+            if (dist > 3.6) {
+                cpu.aiAction = "chase";
+                cpu.aiMode = "chase";
+            } else if (cpu.comboStep === 3) {
+                cpu.aiAction = "retreat";
+                cpu.aiMode = "combat";
+            } else {
+                cpu.aiAction = "attack";
+                cpu.aiMode = "combat";
+            }
+        } else if (style === "stalwart_turtle") {
+            // 鉄壁のアイギス: プレイヤーが攻撃中なら高確率でジャストシールド防御
+            if (player.state === "attack") {
+                cpu.aiAction = "guard";
+                cpu.aiMode = "combat";
+            } else if (dist > 3.0) {
+                cpu.aiAction = "chase";
+                cpu.aiMode = "chase";
+            } else {
+                cpu.aiAction = Math.random() < 0.5 ? "attack" : "guard";
+                cpu.aiMode = "combat";
+            }
         } else {
-            cpu.aiMode = "combat";
-            const r = Math.random();
-            if (r < 0.68) cpu.aiAction = "attack";
-            else cpu.aiAction = "guard";
+            // 剛腕のヴォルカン: 猛突進＆豪快なヘビー攻撃主体
+            if (dist > 3.2) {
+                cpu.aiAction = "chase";
+                cpu.aiMode = "chase";
+            } else {
+                cpu.aiMode = "combat";
+                cpu.aiAction = Math.random() < 0.82 ? "attack" : "guard";
+            }
         }
     }
 
     cpu.isGuarding = false;
     if (cpu.aiAction === "chase") {
         cpu.velocity.add(toPlayer.clone().normalize().multiplyScalar(cpu.speed * dt * 5.5));
+    } else if (cpu.aiAction === "retreat") {
+        // 後退または横ステップ
+        const sideDir = new THREE.Vector3(-toPlayer.z, 0, toPlayer.x).normalize();
+        const backDir = toPlayer.clone().normalize().negate();
+        cpu.velocity.add(backDir.add(sideDir.multiplyScalar(0.7)).normalize().multiplyScalar(cpu.speed * dt * 4.8));
+    } else if (cpu.aiAction === "magic" && cpu.state !== "attack") {
+        cpu.state = "attack";
+        cpu.stateDuration = 0.52;
+        cpu.stateTimer = 0.52;
+        SoundEngine.play('slash');
+        const projDir = toPlayer.clone().normalize();
+        spawnMagicProjectile(cpu.position, projDir, 0xa29bfe, "rush");
     } else if (cpu.aiAction === "attack" && cpu.state !== "attack") {
         cpu.comboStep = (cpu.comboStep % 3) + 1;
         cpu.state = "attack";
@@ -4088,7 +4920,9 @@ function updateCpuAI(dt) {
         cpu.velocity.add(toPlayer.clone().normalize().multiplyScalar(4.0));
         spawnCrescentSlash(cpu.position, player.position, 0xff3838, cpu.comboStep, 1.15);
         if (dist < 3.2 && cpu.stunTimer <= 0) {
-            applyDamage('player', 58 * atkScale);
+            const cpuDmg = Math.round(58 * atkScale);
+            applyDamage('player', cpuDmg);
+            applyElementalStatus(cpu, player, cpuDmg);
         }
     } else if (cpu.aiAction === "guard") {
         cpu.isGuarding = true;
@@ -4467,6 +5301,7 @@ function animate() {
     [player, cpu].forEach(ent => {
         if (ent.airY > 0 || ent.airVelY !== 0) {
             ent.airY += ent.airVelY * dt;
+            const prevVelY = ent.airVelY;
             ent.airVelY -= 19.5 * dt;
             if (ent.airY <= 0) {
                 ent.airY = 0;
@@ -4474,9 +5309,27 @@ function animate() {
                 // D-3 着地時の扁平スケーリング (Squash)
                 if (ent.squashStretch) ent.squashStretch.set(1.22, 0.78, 1.22);
                 spawnFootstepDust(ent.position, 1.5);
+
+                // D-14『ダウン追撃＆床激突』：強打落下時（落下速度 > 7.5 または launched状態）は床激突ダウンへ
+                if ((prevVelY < -7.5 || ent.state === "launched") && ent.state !== "down") {
+                    ent.state = "down";
+                    ent.stateDuration = 0.85;
+                    ent.stateTimer = 0.85;
+                    cameraShakeIntensity = Math.min(0.38, Math.abs(prevVelY) * 0.025);
+                    SoundEngine.play('hit');
+                    spawnDamageNumber(ent.position.x, ent.position.y + 0.4, ent.position.z, "CRASH!", "stun", "💥床激突");
+                    spawnGroundSlamVFX(ent.position, 0xffbe0b, 0.9);
+                }
             }
         }
     });
+
+    // プレイヤーのダウン時受身キー入力検知 (ガード・ダッシュ・移動キー入力で受身転がり)
+    if (player.state === "down") {
+        if (input.guard || input.dash || Math.hypot(input.x, input.z) > 0.35) {
+            performPlayerTechRoll();
+        }
+    }
 
     // K-06 強ふっとび飛行機雲の生成
     if (cpu.state === "launched" && Math.random() < 0.45) {
@@ -4571,6 +5424,7 @@ function animate() {
             spawnHitSparks(cpu.position, pr.colorHex, 28);
             spawnDamageNumber(cpu.position.x, cpu.position.y + cpu.airY, cpu.position.z, dmg, "stun", "MAGIC!");
             applyDamage('cpu', dmg);
+            applyElementalStatus(player, cpu, dmg);
             addCombo(1, dmg);
             addScore(dmg);
             scene.remove(pr.mesh);
@@ -4618,6 +5472,18 @@ function animate() {
     updateAnimatorStatePill(playerMoving);
     renderCityMinimap();
     updateSakuraiInspectorHud();
+
+    // C-14 属性状態異常 (炎上DoT, 感電微ヒットストップ, 氷結スロー, 虚無吸引) 更新
+    updateStatusEffects(player, cpu, dt, true);
+    updateStatusEffects(cpu, player, dt, false);
+    updateStatusEffectsHUD();
+
+    // K-02 画面外ルーペ (Off-screen Magnifier Bubbles) 更新
+    updateOffscreenLoupe();
+
+    // 109 大型街頭LEDビジョン リアルタイム中継 ＆ 地下鉄通気口ジャンプパッド更新
+    update109Billboard(dt);
+    updateCityJumpPads(dt);
 
     // エフェクト更新
     for (let i = effectsList.length - 1; i >= 0; i--) {
@@ -4717,6 +5583,7 @@ function openGraphLoopModal() {
             `<div>🔄 <strong>Loop Engineering (全39本桜井講義統合テレメトリ)</strong>: 現在連勝 <strong>${currentWins} WIN</strong> | SCORE <strong>${currentScore.toLocaleString()}</strong> | 悪魔の釜ホンキ度 <strong>${sakuraiParams.cauldronIntensity.toFixed(1)}</strong> | シティトライアルパッチ <strong>攻+${cityTrialPatches.atk} 速+${cityTrialPatches.spd} 撃+${cityTrialPatches.launch} 防+${cityTrialPatches.def}</strong></div>`;
     }
     modal.style.display = 'flex';
+    runAutonomousMetaSimulation();
 }
 
 function toggleAutoBattle() {
@@ -4940,6 +5807,7 @@ function setupInputs() {
         if (k === ' ') {
             skipCinematic();
             input.guard = true;
+            player.lastGuardPressTime = performance.now();
             e.preventDefault();
         }
         if (k === 'q') toggleLockOn();
@@ -4965,7 +5833,7 @@ function setupInputs() {
     bindPadBtn('btn-atk-rush',   () => handlePlayerActionInput('attack', 'rush'));
     bindPadBtn('btn-atk-wide',   () => handlePlayerActionInput('attack', 'wide'));
     bindPadBtn('btn-atk-heavy',  () => handlePlayerActionInput('attack', 'launch'));
-    bindPadBtn('btn-atk-guard',  () => { input.guard = true; }, () => { input.guard = false; });
+    bindPadBtn('btn-atk-guard',  () => { input.guard = true; player.lastGuardPressTime = performance.now(); }, () => { input.guard = false; });
 
     // 右下 SKILL 4ボタンパッド (先行入力バッファ対応)
     bindPadBtn('btn-skl-ult',    () => handlePlayerActionInput('special'));
@@ -4986,6 +5854,10 @@ function setupInputs() {
     document.getElementById('btn-open-graph-loop')?.addEventListener('click', openGraphLoopModal);
     document.getElementById('btn-close-graph-loop')?.addEventListener('click', () => {
         document.getElementById('graph-loop-modal').style.display = 'none';
+    });
+    document.getElementById('btn-run-sim-loop')?.addEventListener('click', () => {
+        runAutonomousMetaSimulation();
+        SoundEngine.play('patch');
     });
     document.getElementById('btn-auto-toggle')?.addEventListener('click', toggleAutoBattle);
     document.getElementById('btn-lockon-toggle')?.addEventListener('click', toggleLockOn);

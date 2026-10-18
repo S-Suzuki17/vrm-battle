@@ -63,6 +63,8 @@
                     </div>
                     <!-- パラメータ＆シティトライアル強化パッチ表示 -->
                     <div class="char-style-tag" id="player-spec-tag">⚔️ATK:1.05x | 📏範囲:3.4m | 💫ひるみ:1.12x | 🧠AI:ガンビット稼働中</div>
+                    <!-- C-14 属性リアクション・状態異常バッジ -->
+                    <div class="status-effects-bar" id="player-status-bar"></div>
                 </div>
             </div>
 
@@ -125,6 +127,8 @@
                         </div>
                         <span class="skew-label sp-label-txt">SP/体幹</span>
                     </div>
+                    <!-- C-14 CPU属性リアクション・状態異常バッジ -->
+                    <div class="status-effects-bar cpu-status-bar" id="cpu-status-bar"></div>
                 </div>
                 <div class="avatar-circle cpu-circle">
                     <canvas id="cpu-portrait-canvas" width="112" height="112"></canvas>
@@ -142,6 +146,7 @@
         <div class="combo-counter right-combo" id="combo-display">
             <div class="combo-hits"><span id="combo-hits-num">3</span> <small>HIT!</small></div>
             <div class="combo-damage">DAMAGE <span id="combo-damage-num">0</span></div>
+            <div class="combo-style-rank" id="combo-style-rank">GREAT!</div>
         </div>
 
         <!-- 必殺技カットイン・バナー -->
@@ -202,6 +207,41 @@
             </div>
             <div class="ew-poise-track">
                 <div class="ew-poise-fill" id="ew-poise-fill"></div>
+            </div>
+            <div class="ew-status-bar" id="ew-status-bar"></div>
+        </div>
+
+        <!-- K-02『画面外ルーペ』：カメラ外に吹き飛んだ自機・敵の位置とダメージ%を追跡 -->
+        <div id="offscreen-magnifier-layer">
+            <div id="loupe-player" class="loupe-bubble loupe-player" style="display:none;">
+                <div class="loupe-ring">
+                    <span class="loupe-icon">👤</span>
+                    <span class="loupe-pct" id="loupe-pct-player">0%</span>
+                </div>
+                <div class="loupe-arrow" id="loupe-arrow-player"></div>
+            </div>
+            <div id="loupe-cpu" class="loupe-bubble loupe-cpu" style="display:none;">
+                <div class="loupe-ring">
+                    <span class="loupe-icon">👹</span>
+                    <span class="loupe-pct" id="loupe-pct-cpu">0%</span>
+                </div>
+                <div class="loupe-arrow" id="loupe-arrow-cpu"></div>
+            </div>
+        </div>
+
+        <!-- 3D必殺奥義シネマティック・カットインレイヤー -->
+        <div id="ultimate-cutin-layer" class="ultimate-cutin-layer" style="display:none;">
+            <div class="cutin-speedlines"></div>
+            <div class="cutin-screen-split">
+                <div class="cutin-portrait-side">
+                    <canvas id="cutin-avatar-canvas" width="220" height="220"></canvas>
+                    <div class="cutin-eyes-flash"></div>
+                </div>
+                <div class="cutin-text-side">
+                    <div class="cutin-sub" id="cutin-sub">💥 ULTIMATE BURST EX 💥</div>
+                    <div class="cutin-title" id="cutin-title">滅・次元絶影撃</div>
+                    <div class="cutin-user" id="cutin-user">PLAYER</div>
+                </div>
             </div>
         </div>
 
@@ -664,6 +704,17 @@
                     <button class="creator-close-btn" id="btn-close-graph-loop">✕ 閉じる</button>
                 </div>
                 <div id="graph-loop-telemetry-body" style="text-align:left; font-size:13px; line-height:1.65; color:#e2e8f0; background:rgba(15,23,42,0.85); padding:14px; border-radius:10px; border:1px solid rgba(0,242,254,0.35);">
+                </div>
+
+                <!-- ⚡ 自律進化シミュレーション・ラボ（ループエンジニアリング実働UI） -->
+                <div class="sim-lab-section" style="margin-top:14px; text-align:left; background:rgba(15,23,42,0.92); padding:14px; border-radius:10px; border:1px solid #ffd32a;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                        <strong style="color:#ffd32a; font-size:14px;">⚡ 自律進化シミュレーション・ラボ (Autonomous Evolution Lab)</strong>
+                        <button class="btn-cert" id="btn-run-sim-loop" style="padding:6px 14px; font-size:12px;">🚀 100戦自律対戦ループを実行</button>
+                    </div>
+                    <p style="font-size:11px; color:#94a3b8; margin:0 0 8px 0;">4大ボスとトークン構成の相性対戦をバックグラウンド高速シミュレーションし、メタ有向グラフ(DAG)を更新します。</p>
+                    <canvas id="graph-dag-canvas" width="700" height="220" style="width:100%; height:auto; background:#070d1e; border-radius:6px; border:1px solid rgba(0,242,254,0.3);"></canvas>
+                    <div id="sim-meta-advice" style="margin-top:8px; font-size:12px; color:#38ef7d; font-weight:700;">💡 シミュレーション待機中：「100戦自律対戦ループを実行」を押すと最新メタ解析が走ります</div>
                 </div>
             </div>
         </div>

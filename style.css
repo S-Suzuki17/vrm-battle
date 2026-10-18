@@ -364,6 +364,55 @@ body {
     letter-spacing: 1px;
 }
 
+.combo-style-rank {
+    font-size: 20px;
+    font-weight: 900;
+    font-style: italic;
+    letter-spacing: 2px;
+    margin-top: 5px;
+    text-transform: uppercase;
+    display: inline-block;
+    padding: 3px 12px;
+    border-radius: 6px;
+    border: 2px solid rgba(255, 255, 255, 0.4);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.6);
+    transition: transform 0.14s cubic-bezier(0.18, 0.89, 0.32, 1.4);
+}
+
+.combo-style-rank.rank-cool {
+    color: #00f2fe;
+    background: rgba(0, 242, 254, 0.22);
+    border-color: #00f2fe;
+    text-shadow: 0 0 10px rgba(0, 242, 254, 0.9);
+}
+
+.combo-style-rank.rank-great {
+    color: #ffd32a;
+    background: rgba(255, 211, 42, 0.25);
+    border-color: #ffd32a;
+    text-shadow: 0 0 12px rgba(255, 211, 42, 0.95);
+}
+
+.combo-style-rank.rank-excellent {
+    color: #ff793f;
+    background: rgba(255, 121, 63, 0.28);
+    border-color: #ff793f;
+    text-shadow: 0 0 14px rgba(255, 121, 63, 0.95);
+}
+
+.combo-style-rank.rank-sick {
+    color: #fff;
+    background: linear-gradient(135deg, #ff0844 0%, #ffb199 100%);
+    border-color: #ffd32a;
+    text-shadow: 0 0 16px rgba(255, 8, 68, 1.0), 0 0 30px #ffd32a;
+    animation: sickPulse 0.35s infinite alternate;
+}
+
+@keyframes sickPulse {
+    from { transform: scale(1) rotate(-4deg); }
+    to { transform: scale(1.18) rotate(3deg); }
+}
+
 /* ========================================================
    左下メニューガイド ＆ オリキャラ工房起動ボタン (画像1左下再現)
    ======================================================== */
@@ -1746,4 +1795,264 @@ body.cinematic-spectator .sakurai-inspector-panel {
 .si-sliders input[type="range"] {
     width: 100%;
     accent-color: #00f2fe;
+}
+
+/* ========================================================
+   C-14 属性リアクション・状態異常バッジ (Status Effects)
+   ======================================================== */
+.status-effects-bar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-top: 4px;
+    min-height: 18px;
+}
+
+.status-effects-bar.cpu-status-bar {
+    justify-content: flex-end;
+}
+
+.status-pill {
+    font-size: 10px;
+    font-weight: 800;
+    padding: 1px 7px;
+    border-radius: 12px;
+    letter-spacing: 0.5px;
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    box-shadow: 0 0 8px rgba(0,0,0,0.4);
+    animation: pulseStatus 1s infinite alternate;
+}
+
+.status-pill.burn {
+    background: linear-gradient(90deg, #ff4757, #ff6b81);
+    color: #fff;
+    border: 1px solid #ff7979;
+}
+
+.status-pill.shock {
+    background: linear-gradient(90deg, #00d2d3, #0984e3);
+    color: #fff;
+    border: 1px solid #00f2fe;
+}
+
+.status-pill.frost {
+    background: linear-gradient(90deg, #70a1ff, #5352ed);
+    color: #fff;
+    border: 1px solid #70a1ff;
+}
+
+.status-pill.vortex {
+    background: linear-gradient(90deg, #6c5ce7, #a29bfe);
+    color: #fff;
+    border: 1px solid #e056fd;
+}
+
+@keyframes pulseStatus {
+    0% { transform: scale(0.97); opacity: 0.9; }
+    100% { transform: scale(1.03); opacity: 1; }
+}
+
+.ew-status-bar {
+    display: flex;
+    justify-content: center;
+    gap: 3px;
+    margin-top: 2px;
+}
+
+/* ========================================================
+   K-02 画面外ルーペ＆レーダーバブル (Off-screen Magnifier)
+   ======================================================== */
+#offscreen-magnifier-layer {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    z-index: 55;
+    overflow: hidden;
+}
+
+.loupe-bubble {
+    position: absolute;
+    transform: translate(-50%, -50%);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    pointer-events: auto;
+    cursor: pointer;
+    transition: transform 0.05s ease-out;
+}
+
+.loupe-ring {
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    backdrop-filter: blur(8px);
+    box-shadow: 0 0 16px rgba(0,0,0,0.85);
+    border: 2.5px solid #00f2fe;
+    background: rgba(10, 25, 47, 0.88);
+}
+
+.loupe-player .loupe-ring {
+    border-color: #00f2fe;
+    box-shadow: 0 0 15px rgba(0, 242, 254, 0.65);
+}
+
+.loupe-cpu .loupe-ring {
+    border-color: #ff4757;
+    box-shadow: 0 0 15px rgba(255, 71, 87, 0.65);
+}
+
+.loupe-icon {
+    font-size: 16px;
+    line-height: 1;
+}
+
+.loupe-pct {
+    font-size: 10px;
+    font-weight: 900;
+    color: #ffd32a;
+    line-height: 1;
+    margin-top: 2px;
+}
+
+.loupe-arrow {
+    width: 0;
+    height: 0;
+    border-left: 6px solid transparent;
+    border-right: 6px solid transparent;
+    border-top: 9px solid #00f2fe;
+    margin-top: -1px;
+}
+
+.loupe-cpu .loupe-arrow {
+    border-top-color: #ff4757;
+}
+
+/* ========================================================
+   3D必殺奥義シネマティック・カットイン (Ultimate Cut-In)
+   ======================================================== */
+.ultimate-cutin-layer {
+    position: absolute;
+    inset: 0;
+    z-index: 90;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    pointer-events: none;
+    background: rgba(0, 0, 0, 0.55);
+    overflow: hidden;
+    animation: cutinBgFade 0.65s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.cutin-speedlines {
+    position: absolute;
+    inset: -50%;
+    background: repeating-linear-gradient(90deg, transparent, transparent 15px, rgba(255, 211, 42, 0.08) 15px, rgba(255, 211, 42, 0.08) 30px);
+    animation: speedlineScroll 0.2s linear infinite;
+}
+
+@keyframes speedlineScroll {
+    0% { transform: translateX(0); }
+    100% { transform: translateX(-30px); }
+}
+
+.cutin-screen-split {
+    position: relative;
+    width: 100%;
+    height: 140px;
+    background: linear-gradient(90deg, rgba(2, 6, 23, 0.98) 0%, rgba(30, 41, 59, 0.95) 45%, rgba(255, 56, 56, 0.9) 75%, rgba(255, 211, 42, 0.95) 100%);
+    border-top: 3.5px solid #ffd32a;
+    border-bottom: 3.5px solid #00f2fe;
+    display: flex;
+    align-items: center;
+    box-shadow: 0 0 50px rgba(0, 0, 0, 0.95);
+    transform: skewY(-2.5deg) scaleX(0.2);
+    opacity: 0;
+    animation: cutinSplitEnter 0.65s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.cutin-portrait-side {
+    width: 220px;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    overflow: hidden;
+    background: #020617;
+    border-right: 3px solid #00f2fe;
+}
+
+.cutin-portrait-side canvas {
+    width: 130px;
+    height: 130px;
+    object-fit: cover;
+}
+
+.cutin-eyes-flash {
+    position: absolute;
+    top: 50%;
+    left: 0;
+    right: 0;
+    height: 4px;
+    background: #00f2fe;
+    box-shadow: 0 0 20px #00f2fe, 0 0 35px #fff;
+    animation: eyeFlash 0.4s ease-out forwards;
+}
+
+@keyframes eyeFlash {
+    0% { transform: scaleX(0); opacity: 1; }
+    50% { transform: scaleX(1.4); opacity: 1; }
+    100% { transform: scaleX(1); opacity: 0; }
+}
+
+.cutin-text-side {
+    flex: 1;
+    padding-left: 24px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    text-shadow: 2px 2px 0 #000;
+}
+
+.cutin-sub {
+    font-size: 13px;
+    font-weight: 900;
+    letter-spacing: 3px;
+    color: #00f2fe;
+    text-transform: uppercase;
+}
+
+.cutin-title {
+    font-size: 42px;
+    font-weight: 900;
+    letter-spacing: 2px;
+    color: #fff;
+    text-shadow: 0 0 22px rgba(255, 211, 42, 0.9), 3px 3px 0 #000;
+    transform: skewX(-8deg);
+}
+
+.cutin-user {
+    font-size: 14px;
+    font-weight: 800;
+    color: #ffd32a;
+}
+
+@keyframes cutinSplitEnter {
+    0% { transform: skewY(-2.5deg) scaleX(0.2); opacity: 0; }
+    25% { transform: skewY(-2.5deg) scaleX(1.05); opacity: 1; }
+    80% { transform: skewY(-2.5deg) scaleX(1); opacity: 1; }
+    100% { transform: skewY(-2.5deg) scaleX(1.1); opacity: 0; }
+}
+
+@keyframes cutinBgFade {
+    0% { opacity: 0; }
+    15% { opacity: 1; }
+    85% { opacity: 1; }
+    100% { opacity: 0; }
 }
