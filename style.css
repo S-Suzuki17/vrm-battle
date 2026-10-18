@@ -1175,7 +1175,7 @@ body {
 /* ========================================================
    🔥 中間生存報告 ＆ 💀 引退アナリティクス ＆ 🖼️ 証明書モーダル
    ======================================================== */
-.milestone-modal, .cert-modal {
+.milestone-modal, .cert-modal, .pause-modal {
     position: absolute;
     inset: 0;
     background: rgba(5, 9, 18, 0.85);
@@ -1187,7 +1187,7 @@ body {
     padding: 14px;
 }
 
-.milestone-card, .cert-card {
+.milestone-card, .cert-card, .pause-card {
     background: linear-gradient(160deg, #1e293b 0%, #0f172a 100%);
     border: 2.5px solid var(--accent-gold);
     border-radius: 14px;
@@ -1197,7 +1197,27 @@ body {
     box-shadow: 0 20px 55px rgba(0,0,0,0.95);
 }
 
-.milestone-badge, .retire-banner {
+.pause-card {
+    max-width: 480px;
+    border-color: #00f2fe;
+    box-shadow: 0 0 35px rgba(0, 242, 254, 0.35);
+}
+
+.pause-card h2 {
+    font-size: 28px;
+    color: #00f2fe;
+    margin-bottom: 8px;
+    letter-spacing: 2px;
+}
+
+.pause-card p {
+    font-size: 13px;
+    color: #94a3b8;
+    margin-bottom: 20px;
+    line-height: 1.6;
+}
+
+.milestone-badge, .retire-banner, .pause-badge {
     display: inline-block;
     background: linear-gradient(90deg, #ff9f1a, #ff3838);
     color: #fff;
@@ -1207,6 +1227,10 @@ body {
     border-radius: 20px;
     margin-bottom: 8px;
     letter-spacing: 1px;
+}
+
+.pause-badge {
+    background: linear-gradient(90deg, #0984e3, #00cec9);
 }
 
 .milestone-card h2 {
@@ -1222,7 +1246,7 @@ body {
     line-height: 1.5;
 }
 
-.milestone-actions, .cert-actions {
+.milestone-actions, .cert-actions, .pause-actions {
     display: flex;
     flex-wrap: wrap;
     justify-content: center;

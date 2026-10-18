@@ -217,6 +217,8 @@ const SoundEngine = {
     bgmTimer: null,
     bgmStep: 0,
     duckUntil: 0, // I-2 重要効果音再生時にBGM・環境音をダッキング（音量抑制）する時刻
+    ambientNode: null,
+    ambientGain: null,
     init() {
         if (!this.ctx) {
             const AudioCtx = window.AudioContext || window.webkitAudioContext;
@@ -227,6 +229,9 @@ const SoundEngine = {
         }
         if (this.enabled && !this.bgmTimer) {
             this.startBgmLoop();
+        }
+        if (this.enabled && !this.ambientNode) {
+            this.startAmbientLoop();
         }
     },
     play(type) {
@@ -258,6 +263,16 @@ const SoundEngine = {
                 gain.gain.exponentialRampToValueAtTime(0.001, now + 0.13);
                 osc.start(now);
                 osc.stop(now + 0.13);
+            } else if (type === 'smash') {
+                // D-11 はじきスマッシュ攻撃：強烈な打撃アタック音
+                this.duckUntil = now + 0.40;
+                osc.type = 'sawtooth';
+                osc.frequency.setValueAtTime(420, now);
+                osc.frequency.exponentialRampToValueAtTime(40, now + 0.22);
+                gain.gain.setValueAtTime(0.35, now);
+                gain.gain.exponentialRampToValueAtTime(0.001, now + 0.24);
+                osc.start(now);
+                osc.stop(now + 0.24);
             } else if (type === 'justguard') {
                 // B-1/B-2 ジャストシールド成功時の高アタック金属パリィ音
                 this.duckUntil = now + 0.35;
@@ -313,6 +328,24 @@ const SoundEngine = {
                 gain.gain.exponentialRampToValueAtTime(0.001, now + 0.14);
                 osc.start(now);
                 osc.stop(now + 0.14);
+            } else if (type === 'pause') {
+                // J-10 ポーズ音
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(880, now);
+                osc.frequency.setValueAtTime(1174.66, now + 0.08);
+                gain.gain.setValueAtTime(0.20, now);
+                gain.gain.exponentialRampToValueAtTime(0.001, now + 0.20);
+                osc.start(now);
+                osc.stop(now + 0.20);
+            } else if (type === 'unpause') {
+                // J-10 再開音
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(1174.66, now);
+                osc.frequency.setValueAtTime(880, now + 0.08);
+                gain.gain.setValueAtTime(0.20, now);
+                gain.gain.exponentialRampToValueAtTime(0.001, now + 0.20);
+                osc.start(now);
+                osc.stop(now + 0.20);
             } else if (type === 'ko') {
                 this.duckUntil = now + 0.65;
                 osc.type = 'sawtooth';
@@ -348,6 +381,40 @@ const SoundEngine = {
             osc.start(now);
             osc.stop(now + 0.23);
         }, 260);
+    },
+    startAmbientLoop() {
+        if (this.ambientNode || !this.ctx) return;
+        try {
+            // I-11『環境音のバランス』: 渋谷実寸大都市空間の低周波アンビエント（ビル風・都市ノイズ）合成
+            const bufferSize = this.ctx.sampleRate * 2;
+            const noiseBuffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+            const output = noiseBuffer.getChannelData(0);
+            let b0 = 0, b1 = 0, b2 = 0;
+            for (let i = 0; i < bufferSize; i++) {
+                const white = Math.random() * 2 - 1;
+                b0 = 0.99886 * b0 + white * 0.0555179;
+                b1 = 0.99332 * b1 + white * 0.0750759;
+                b2 = 0.96900 * b2 + white * 0.1538520;
+                output[i] = (b0 + b1 + b2) * 0.08;
+            }
+            const whiteNoise = this.ctx.createBufferSource();
+            whiteNoise.buffer = noiseBuffer;
+            whiteNoise.loop = true;
+
+            const filter = this.ctx.createBiquadFilter();
+            filter.type = 'lowpass';
+            filter.frequency.value = 260; // 低周波のみ通過させ都市の重厚な空気を醸成
+
+            const gainNode = this.ctx.createGain();
+            gainNode.gain.value = 0.015; // SFXやBGMを阻害しない繊細な音量バランス
+
+            whiteNoise.connect(filter);
+            filter.connect(gainNode);
+            gainNode.connect(this.ctx.destination);
+            whiteNoise.start();
+            this.ambientNode = whiteNoise;
+            this.ambientGain = gainNode;
+        } catch (e) {}
     },
     toggle() {
         this.enabled = !this.enabled;
@@ -2875,9 +2942,62 @@ const COMBO_MOVE_EFFECTS = {
     cyclone_burst:    { label: "🌀暴風ハリケーン", lunge: 6.8, dmgMult: 1.38, rangeMult: 1.45, poiseMult: 1.50, launchY: 7.2 }
 };
 
+// ========================================================
+// D-6『遅さは罪』入力先行バッファ ＆ D-11『はじき入力』スマッシュ判定
+// ========================================================
+let inputBuffer = {
+    action: null,
+    subType: null,
+    expiresAt: 0
+};
+
+let lastFlickKey = null;
+let lastFlickTime = 0;
+let smashFlickWindow = 0; // timestamp until when smash input is valid
+
+function checkFlick(key) {
+    const now = performance.now();
+    if (lastFlickKey === key && (now - lastFlickTime) < 250) {
+        // D-11 急激な方向入力（ダブルタップ・はじき）：はじきスマッシュ受付ウィンドウ開始
+        smashFlickWindow = now + 260; // 60fpsで約15F
+        player.isSprinting = true;
+        spawnFootstepDust(player.position, 1.3);
+    } else {
+        lastFlickKey = key;
+    }
+    lastFlickTime = now;
+}
+
+function handlePlayerActionInput(action, subType = null) {
+    if (!isGameActive || isPaused) return;
+
+    const overdriveMult = player.overdriveTimer > 0 ? 1.28 : 1.0;
+    const patchSpdBonus = 1.0 + (cityTrialPatches.spd || 0) * 0.04;
+    const cancelWindow = 0.16 / (player.atkSpeed * overdriveMult * patchSpdBonus);
+    const isFree = (player.state === "idle" || player.state === "walk") ||
+                   ((player.state === "attack" || player.state === "skill") && player.stateTimer <= cancelWindow);
+
+    if (isFree) {
+        executePlayerAction(action, subType);
+    } else {
+        // D-6『遅さは罪』: 行動硬直中の4〜6F（約150ms）先行入力をバッファキューに格納し取りこぼしを撲滅
+        inputBuffer.action = action;
+        inputBuffer.subType = subType;
+        inputBuffer.expiresAt = performance.now() + 150;
+    }
+}
+
+function executePlayerAction(action, subType) {
+    if (action === 'attack') performPlayerAttack(subType || 'rush');
+    else if (action === 'arts') performSkillArts();
+    else if (action === 'special') performPlayerSpecial();
+    else if (action === 'dodge') performPlayerDodge();
+    else if (action === 'jump') performPlayerJump();
+}
+
 /**
  * プレイヤーの通常攻撃 ＆ カスタム3段コンボルート（Starter ➔ Linker ➔ Finisher）
- * ＋ 桜井政博仕様：C-1 フレームデータ算出 / D-4 8つのヒットストップ仕様 / K-06 スマブラ式ふっとび率％ / B-29 ハンデブースト
+ * ＋ 桜井政博仕様：C-1 フレームデータ算出 / D-4 8つのヒットストップ仕様 / D-11 はじきスマッシュ / K-06 スマブラ式ふっとび率％ / B-29 ハンデブースト
  */
 function performPlayerAttack(subType = "rush") {
     if (!isGameActive) return;
@@ -2888,26 +3008,34 @@ function performPlayerAttack(subType = "rush") {
     const cancelWindow = 0.16 / (player.atkSpeed * overdriveMult * patchSpdBonus);
     if ((player.state === "attack" || player.state === "skill") && player.stateTimer > cancelWindow) return;
 
+    // D-11『はじき入力』スマッシュ判定
+    const isSmash = (performance.now() < smashFlickWindow) || (subType === "smash");
+    if (isSmash) {
+        smashFlickWindow = 0;
+        subType = "smash";
+    }
+
     player.attackSubType = subType;
     player.comboStep = (player.comboStep % 3) + 1;
     player.state = "attack";
-    SoundEngine.play('slash');
+    SoundEngine.play(isSmash ? 'smash' : 'slash');
 
     // コンボ段数に応じたユーザー選択技を取得
     const route = player.comboRoute || { starter: 'flash_step', linker: 'spiral_slash', finisher: 'sky_upper' };
     const moveKey = player.comboStep === 1 ? route.starter : (player.comboStep === 2 ? route.linker : route.finisher);
     const moveSpec = COMBO_MOVE_EFFECTS[moveKey] || COMBO_MOVE_EFFECTS.flash_step;
 
-    const baseDur = (player.comboStep === 3 || subType === "launch") ? 0.44 : (subType === "wide" ? 0.36 : 0.27);
+    const baseDur = (player.comboStep === 3 || subType === "launch" || isSmash) ? 0.44 : (subType === "wide" ? 0.36 : 0.27);
     player.stateDuration = baseDur / (player.atkSpeed * overdriveMult * patchSpdBonus);
     player.stateTimer = player.stateDuration;
 
     // C-1『フレームはコマ数』 / C-9『フレームを計れるようになれ』：60fps換算フレームデータ算出
     const totalFrames = Math.max(12, Math.round(player.stateDuration * 60));
-    const startupFrames = player.comboStep === 3 ? 6 : 3;
+    const startupFrames = (player.comboStep === 3 || isSmash) ? 6 : 3;
     const activeFrames = 4;
-    const advFrames = player.comboStep === 3 ? "+8F (打上有利)" : "+4F (連撃有利)";
-    lastFrameDataText = `${moveSpec.label} [発生 ${startupFrames}F / 持続 ${activeFrames}F / 全体 ${totalFrames}F / 硬直差 ${advFrames}]`;
+    const advFrames = (player.comboStep === 3 || isSmash) ? "+8F (打上有利)" : "+4F (連撃有利)";
+    const labelPrefix = isSmash ? "⚡はじきスマッシュ " : "";
+    lastFrameDataText = `${labelPrefix}${moveSpec.label} [発生 ${startupFrames}F / 持続 ${activeFrames}F / 全体 ${totalFrames}F / 硬直差 ${advFrames}]`;
 
     // 1段目が armor_impact の場合は攻撃中スーパーアーマー（無敵）付与
     if (player.comboStep === 1 && moveKey === "armor_impact") {
@@ -2924,7 +3052,7 @@ function performPlayerAttack(subType = "rush") {
     const lungeDir = input.lockOn
         ? toCpu.clone().normalize()
         : new THREE.Vector3(Math.sin(player.rotationY), 0, Math.cos(player.rotationY));
-    const lunge = moveSpec.lunge * (subType === "launch" ? 1.1 : 1.0);
+    const lunge = moveSpec.lunge * ((subType === "launch" || isSmash) ? 1.15 : 1.0);
     player.velocity.copy(lungeDir.multiplyScalar(lunge));
     spawnFootstepDust(player.position, 1.5);
 
@@ -2935,15 +3063,16 @@ function performPlayerAttack(subType = "rush") {
         spawnMagicProjectile(player.position, toCpu.clone().normalize(), pal.main, subType);
     }
 
-    spawnCrescentSlash(player.position, cpu.position, player.comboStep === 3 ? pal.sub : pal.main, player.comboStep, rangeRatio);
+    spawnCrescentSlash(player.position, cpu.position, (player.comboStep === 3 || isSmash) ? pal.sub : pal.main, player.comboStep, rangeRatio);
 
     const effectiveRange = player.attackRange * moveSpec.rangeMult * (subType === "wide" ? 1.12 : 1.0);
     checkStreetPropHits(player.position, effectiveRange);
 
     if (dist <= effectiveRange) {
-        SoundEngine.play('hit');
-        const rawDmg = (subType === "launch" ? 86 : (subType === "wide" ? 66 : 50)) * moveSpec.dmgMult;
-        const isFinisher = player.comboStep === 3 || subType === "launch";
+        SoundEngine.play(isSmash ? 'smash' : 'hit');
+        const rawBase = (subType === "launch" ? 86 : (subType === "wide" ? 66 : 50)) * (isSmash ? 1.38 : 1.0);
+        const rawDmg = rawBase * moveSpec.dmgMult;
+        const isFinisher = player.comboStep === 3 || subType === "launch" || isSmash;
         const archMult = getArchetypeMultiplier(player.archetype, cpu.archetype);
         const comboScale = 1 + comboHits * (player.comboBonus || 0.04);
         // B-29 / D-14 ハンデブースト（ピンチ時逆転怒り補正 1.20x）＋ N-06 シティトライアル強化パッチ補正
@@ -2951,13 +3080,17 @@ function performPlayerAttack(subType = "rush") {
         const patchAtkMult = 1.0 + (cityTrialPatches.atk || 0) * 0.06;
         let finalDmg = Math.round(rawDmg * player.atkScale * overdriveMult * archMult * comboScale * underdogMult * patchAtkMult);
 
-        const poiseDamage = (subType === "launch" ? 45 : 26) * moveSpec.poiseMult * player.stunPower * archMult;
+        const poiseDamage = (subType === "launch" ? 45 : 26) * moveSpec.poiseMult * player.stunPower * archMult * (isSmash ? 1.4 : 1.0);
         cpu.poise = Math.max(0, cpu.poise - poiseDamage);
 
         // C-12『ノーリアクションを排除せよ』：ガード時も必ず火花・振動・フラッシュを発生
         triggerDefenderFlashing(cpu);
 
-        if (cpu.isGuarding && subType !== "launch" && moveKey !== "guard_crush" && cpu.poise > 0) {
+        if (isSmash) {
+            showAnnouncement("⚡ はじきスマッシュ！ (SMASH FLICK)", "#ffd32a");
+        }
+
+        if (cpu.isGuarding && subType !== "launch" && !isSmash && moveKey !== "guard_crush" && cpu.poise > 0) {
             finalDmg = Math.floor(finalDmg * 0.2);
             cpu.launchPct = Math.min(999, cpu.launchPct + Math.max(1, Math.round(finalDmg * 0.06)));
             spawnHitSparks(cpu.position, 0x70a1ff, 18);
@@ -2977,14 +3110,15 @@ function performPlayerAttack(subType = "rush") {
             const knockDir = toCpu.clone().normalize();
             hitStopVector.copy(knockDir);
 
-            if (isFinisher || moveSpec.launchY > 0) {
+            if (isFinisher || moveSpec.launchY > 0 || isSmash) {
                 cpu.state = "launched";
                 cpu.stateDuration = stunDuration;
                 cpu.stateTimer = stunDuration;
-                cpu.airVelY = (moveSpec.launchY || 7.6) * Math.min(1.85, 0.85 + smashKnockbackScale * 0.35);
-                cpu.velocity.add(knockDir.multiplyScalar(4.2 * smashKnockbackScale));
-                spawnGroundSlamVFX(cpu.position, pal.sub, 1.15);
-                spawnDamageNumber(cpu.position.x, cpu.position.y + cpu.airY, cpu.position.z, `${finalDmg} (${cpu.launchPct}%)`, "crit", `${moveSpec.label}!`);
+                const smashAirMult = isSmash ? 1.35 : 1.0;
+                cpu.airVelY = (moveSpec.launchY || 7.6) * Math.min(2.1, 0.85 + smashKnockbackScale * 0.35) * smashAirMult;
+                cpu.velocity.add(knockDir.multiplyScalar(4.2 * smashKnockbackScale * (isSmash ? 1.35 : 1.0)));
+                spawnGroundSlamVFX(cpu.position, isSmash ? 0xffd32a : pal.sub, 1.25);
+                spawnDamageNumber(cpu.position.x, cpu.position.y + cpu.airY, cpu.position.z, `${finalDmg} (${cpu.launchPct}%)`, "crit", isSmash ? "SMASH!" : `${moveSpec.label}!`);
                 addScore(Math.round(finalDmg * 2 * getCauldronMultipliers().rewardMult));
             } else {
                 cpu.state = "stunned";
@@ -3000,9 +3134,10 @@ function performPlayerAttack(subType = "rush") {
 
             // D-4『8つのヒットストップ仕様』：威力比例 ＋ 電気属性(thunder_cyan)1.35倍 ＋ 【パラメーター】倍率
             const elecBonus = player.vfxElement === "thunder_cyan" ? 1.35 : 1.0;
-            cameraShakeIntensity = isFinisher ? 0.42 : 0.18;
-            hitStopTimer = (isFinisher ? 0.075 : 0.035) * elecBonus * sakuraiParams.hitStopScale;
-            spawnHitSparks(cpu.position, pal.sub, isFinisher ? 48 : 30);
+            const smashHitstopMult = isSmash ? 1.4 : 1.0;
+            cameraShakeIntensity = (isFinisher || isSmash) ? 0.45 : 0.18;
+            hitStopTimer = (isFinisher ? 0.075 : 0.035) * elecBonus * sakuraiParams.hitStopScale * smashHitstopMult;
+            spawnHitSparks(cpu.position, isSmash ? 0xffd32a : pal.sub, isFinisher ? 48 : 30);
         }
 
         applyDamage('cpu', finalDmg);
@@ -3524,6 +3659,9 @@ function spawnNextCpu() {
 }
 
 function resetGame() {
+    if (isPaused) togglePause();
+    const pauseModal = document.getElementById('pause-modal');
+    if (pauseModal) pauseModal.style.display = 'none';
     currentWins = 0;
     currentScore = 0;
     cityTrialPatches.atk = 0;
@@ -4230,6 +4368,13 @@ function animate() {
     let rawDt = Math.min(clock.getDelta(), 0.05);
     const elapsedTime = clock.getElapsedTime();
 
+    // J-10『必ず止められるように』: ポーズ中は描画のみ維持し物理・タイマー進行を静止
+    if (isPaused) {
+        if (composer) composer.render();
+        else renderer.render(scene, camera);
+        return;
+    }
+
     if (hitStopTimer > 0) {
         hitStopTimer -= rawDt;
         // D-4『8つのヒットストップ仕様』: 防御側(defender)がふっとびベクトル(hitStopVector)に沿って高速振動
@@ -4385,6 +4530,22 @@ function animate() {
             player.comboStep = 0;
         }
     }
+
+    // D-6『遅さは罪』: 入力バッファの先行入力をチェックし、硬直終了フレームで即時発動
+    if (inputBuffer.expiresAt > performance.now()) {
+        const overdriveMult = player.overdriveTimer > 0 ? 1.28 : 1.0;
+        const patchSpdBonus = 1.0 + (cityTrialPatches.spd || 0) * 0.04;
+        const cancelWindow = 0.16 / (player.atkSpeed * overdriveMult * patchSpdBonus);
+        const canExecute = (player.state === "idle" || player.state === "walk") ||
+            ((player.state === "attack" || player.state === "skill") && player.stateTimer <= cancelWindow);
+        if (canExecute) {
+            const nextAction = inputBuffer.action;
+            const nextSub = inputBuffer.subType;
+            inputBuffer.expiresAt = 0;
+            executePlayerAction(nextAction, nextSub);
+        }
+    }
+
     if (cpu.stateTimer > 0) {
         cpu.stateTimer -= dt;
         if (cpu.stateTimer <= 0 && cpu.stunTimer <= 0) cpu.state = "idle";
@@ -4715,6 +4876,34 @@ function toggleCinematicSpectator() {
     }
 }
 
+// ========================================================
+// J-10『必ず飛ばせるように、止められるように』ポーズ機能 ＆ 演出スキップ
+// ========================================================
+let isPaused = false;
+
+function togglePause() {
+    if (!isGameActive) return;
+    isPaused = !isPaused;
+    const pauseModal = document.getElementById('pause-modal');
+    if (pauseModal) {
+        pauseModal.style.display = isPaused ? 'flex' : 'none';
+    }
+    const btn = document.getElementById('btn-pause-toggle');
+    if (btn) {
+        btn.innerText = isPaused ? '▶️ 再開' : '⏸️ ポーズ';
+        btn.classList.toggle('active', isPaused);
+    }
+    SoundEngine.play(isPaused ? 'pause' : 'unpause');
+}
+
+function skipCinematic() {
+    // J-10 演出スキップ：長引くKOスローモーションを即座にスキップして試合テンポを最大化
+    if (isKoSlowMo) {
+        isKoSlowMo = false;
+        slowMoTimer = 0;
+    }
+}
+
 /**
  * B-14『リトライは迅速に』：ノーローディング即座リトライ
  */
@@ -4728,21 +4917,31 @@ function setupInputs() {
     window.addEventListener('keydown', e => {
         if (document.activeElement && (document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'SELECT')) return;
         const k = e.key.toLowerCase();
-        if (k === 'w' || k === 'arrowup') input.moveZ = 1;
-        if (k === 's' || k === 'arrowdown') input.moveZ = -1;
-        if (k === 'a' || k === 'arrowleft') input.moveX = -1;
-        if (k === 'd' || k === 'arrowright') input.moveX = 1;
+        if (k === 'w' || k === 'arrowup') { input.moveZ = 1; checkFlick('up'); }
+        if (k === 's' || k === 'arrowdown') { input.moveZ = -1; checkFlick('down'); }
+        if (k === 'a' || k === 'arrowleft') { input.moveX = -1; checkFlick('left'); }
+        if (k === 'd' || k === 'arrowright') { input.moveX = 1; checkFlick('right'); }
 
-        if (k === 'j' || k === 'z') performPlayerAttack('rush');
-        if (k === 'i' || k === 'c') performPlayerAttack('wide');
-        if (k === 'u' || k === 'e') performPlayerAttack('launch');
-        if (k === 'o' || k === 'f') performSkillArts();
-        if (k === 'k' || k === 'x') performPlayerSpecial();
-        if (k === 'l' || k === 'shift') performPlayerDodge();
-        if (k === 'v') performPlayerJump();
+        // D-6『遅さは罪』: 4F〜6F先行入力バッファ経由で攻撃・アクションを発動
+        if (k === 'j' || k === 'z') handlePlayerActionInput('attack', 'rush');
+        if (k === 'i' || k === 'c') handlePlayerActionInput('attack', 'wide');
+        if (k === 'u' || k === 'e') handlePlayerActionInput('attack', 'launch');
+        if (k === 'o' || k === 'f') handlePlayerActionInput('arts');
+        if (k === 'k' || k === 'x') handlePlayerActionInput('special');
+        if (k === 'l' || k === 'shift') handlePlayerActionInput('dodge');
+        if (k === 'v') handlePlayerActionInput('jump');
+
         if (k === 'p') toggleAutoBattle();
         if (k === 'r') performQuickRetry(); // B-14 迅速リトライキー
-        if (k === ' ') { input.guard = true; e.preventDefault(); }
+        if (e.key === 'Escape' || k === 'escape') {
+            togglePause();
+            e.preventDefault();
+        }
+        if (k === ' ') {
+            skipCinematic();
+            input.guard = true;
+            e.preventDefault();
+        }
         if (k === 'q') toggleLockOn();
     });
 
@@ -4762,17 +4961,25 @@ function setupInputs() {
         el.addEventListener('mouseup', () => { if (onUp) onUp(); });
     };
 
-    // 左下 ATTACK 4ボタンパッド
-    bindPadBtn('btn-atk-rush',   () => performPlayerAttack('rush'));
-    bindPadBtn('btn-atk-wide',   () => performPlayerAttack('wide'));
-    bindPadBtn('btn-atk-heavy',  () => performPlayerAttack('launch'));
+    // 左下 ATTACK 4ボタンパッド (先行入力バッファ対応)
+    bindPadBtn('btn-atk-rush',   () => handlePlayerActionInput('attack', 'rush'));
+    bindPadBtn('btn-atk-wide',   () => handlePlayerActionInput('attack', 'wide'));
+    bindPadBtn('btn-atk-heavy',  () => handlePlayerActionInput('attack', 'launch'));
     bindPadBtn('btn-atk-guard',  () => { input.guard = true; }, () => { input.guard = false; });
 
-    // 右下 SKILL 4ボタンパッド
-    bindPadBtn('btn-skl-ult',    performPlayerSpecial);
-    bindPadBtn('btn-skl-arts',   performSkillArts);
-    bindPadBtn('btn-skl-dodge',  performPlayerDodge);
-    bindPadBtn('btn-skl-jump',   performPlayerJump);
+    // 右下 SKILL 4ボタンパッド (先行入力バッファ対応)
+    bindPadBtn('btn-skl-ult',    () => handlePlayerActionInput('special'));
+    bindPadBtn('btn-skl-arts',   () => handlePlayerActionInput('arts'));
+    bindPadBtn('btn-skl-dodge',  () => handlePlayerActionInput('dodge'));
+    bindPadBtn('btn-skl-jump',   () => handlePlayerActionInput('jump'));
+
+    // J-10『必ず飛ばせるように、止められるように』ポーズ関連ボタン
+    document.getElementById('btn-pause-toggle')?.addEventListener('click', togglePause);
+    document.getElementById('btn-resume-battle')?.addEventListener('click', () => { if (isPaused) togglePause(); });
+    document.getElementById('btn-pause-retry')?.addEventListener('click', () => {
+        if (isPaused) togglePause();
+        performQuickRetry();
+    });
 
     // 上部 監督・観戦コントロールバー ＆ 桜井式デバッグボタン
     document.getElementById('open-cert-btn')?.addEventListener('click', () => openCertificateModal('SURVIVAL'));
@@ -4884,9 +5091,11 @@ function setupTouchJoystick() {
 
     let dragging = false;
     let startX = 0, startY = 0;
+    let dragStartTime = 0;
 
     const startDrag = (cx, cy) => {
         dragging = true;
+        dragStartTime = performance.now();
         const rect = zone.getBoundingClientRect();
         startX = rect.left + rect.width / 2;
         startY = rect.top + rect.height / 2;
@@ -4904,6 +5113,11 @@ function setupTouchJoystick() {
         stick.style.transform = `translate(${Math.cos(angle) * clamped}px, ${Math.sin(angle) * clamped}px)`;
         input.moveX = (Math.cos(angle) * clamped) / maxR;
         input.moveZ = -(Math.sin(angle) * clamped) / maxR;
+
+        // D-11 スティックの急速なはじき入力（フリック）を検知
+        if (clamped >= 26 && (performance.now() - dragStartTime) < 140) {
+            smashFlickWindow = performance.now() + 260;
+        }
     };
 
     const stopDrag = () => {

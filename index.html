@@ -90,6 +90,7 @@
                     <button class="dir-btn active" id="btn-sound-toggle" title="I-2/I-9 重要度ダッキング＆高アタック効果音ON/OFF">🔊 効果音/BGM: ON</button>
                     <button class="dir-btn" id="btn-sakurai-debug" title="K-08/C-1/F-2 桜井式3D当たり判定球＆60fpsフレーム・【パラメーター】モニター (Bキー)">🛠️ 桜井式判定・仕様</button>
                     <button class="dir-btn" id="btn-quick-retry" title="B-14 リトライは迅速に：ロード時間ゼロで即座にラウンド再挑戦 (Rキー)">⚡ 即リトライ</button>
+                    <button class="dir-btn" id="btn-pause-toggle" title="J-10『必ず飛ばせるように、止められるように』：試合の一時停止/再開 (ESCキー / スペース長押し)">⏸️ ポーズ</button>
                     <button class="dir-btn" id="btn-cinematic-mode" title="UIを消して都市バトルを鑑賞">🎬 観戦カメラ</button>
                     <button class="dir-btn" id="btn-open-graph-loop" title="『桜井政博のゲーム作るには』全39本（A〜N）＆グラフ/ループ統合状況">📚 桜井全39講＆グラフ</button>
                     <button class="dir-btn" id="btn-export-build" title="キャラ＆トークン＆AIデータをJSON書き出し">📦 書き出し</button>
@@ -559,6 +560,21 @@
                     <button type="button" class="btn-ai-prompt" id="btn-copy-ai-3d-prompt" title="Tripo AI / Meshy AI / Luma AI 向けのゲームレディ3Dアセット生成プロンプトをワンクリックコピー">🤖 AI 3Dプロンプトコピー (Tripo/Meshy用)</button>
                     <button type="button" class="btn-preview-apply" id="btn-apply-preview">🔄 出撃前に街で試運転する</button>
                     <button type="button" class="btn-lock-register" id="btn-lock-register">🚀 このオリキャラで出撃登録する（負けるまで変更不可！）</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- ========================================================
+             ⏸️ J-10『必ず飛ばせるように、止められるように』ポーズ画面
+             ======================================================== -->
+        <div class="pause-modal" id="pause-modal" style="display: none;">
+            <div class="pause-card">
+                <div class="pause-badge">⏸️ PAUSED — 一時停止中</div>
+                <h2>BATTLE SUSPENDED</h2>
+                <p>J-10『必ず飛ばせるように、止められるように』：<br>思考を整え、状況を確認できます（ESCキーで再開）。</p>
+                <div class="pause-actions">
+                    <button class="btn-cert" id="btn-resume-battle">▶️ 試合を再開する (ESC)</button>
+                    <button class="btn-retry" id="btn-pause-retry">⚡ ラウンドをやり直す (R)</button>
                 </div>
             </div>
         </div>
