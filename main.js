@@ -187,6 +187,10 @@ let shibuyaBillboardTexture = null;  // 109大型街頭LEDビジョン動的Canv
 let shibuyaBillboardCanvas = null;
 let billboardUpdateTimer = 0;
 let cityJumpPads = [];               // 渋谷地下鉄通気口ジャンプパッド配列
+let landscapeTerrainMesh = null;     // Udemy ランドスケープ起伏地形メッシュ
+let oceanWaterMesh = null;           // Udemy ウォータープラグイン海面メッシュ
+let instancedGrassMesh = null;       // Udemy 風に揺れるインスタンス草メッシュ
+let grassInitialTransforms = [];
 let effectsList = [];
 let projectilesList = [];
 let playerAuraParticles = [];
@@ -836,15 +840,17 @@ function createDaylightAnimeColosseum() {
         envGroup.add(skyDome);
     });
 
-    // 1. 広域都市コンクリート＆歩道基盤 (380m × 380m)
-    const outerCityGround = new THREE.Mesh(
-        new THREE.PlaneGeometry(380, 380),
-        new THREE.MeshStandardMaterial({ color: 0x222938, roughness: 0.55, metalness: 0.18 })
-    );
-    outerCityGround.rotation.x = -Math.PI / 2;
-    outerCityGround.position.y = -0.02;
-    outerCityGround.receiveShadow = true;
-    envGroup.add(outerCityGround);
+    // Udemy 3D制作全工程 ①: 起伏スカルプトランドスケープ (山脈・丘陵・海岸線)
+    createUdemyLandscape(envGroup);
+
+    // Udemy 3D制作全工程 ②: 南側海岸の波打つオーシャン水面 (ウォータープラグイン)
+    createUdemyOceanWater(envGroup);
+
+    // Udemy 3D制作全工程 ③: 風に揺れる数千本のインスタンス草 (フォリッジ)
+    createUdemyInstancedGrass(envGroup);
+
+    // Udemy 3D制作全工程 ④: 自然岩石群 (Boulders) ＆ 丘陵の樹木 (Trees)
+    createUdemyRocksAndTrees(envGroup);
 
     // 2. 実寸大 幅24m×長さ160m 大通り（南北大通り・東西大通り・斜めセンター街）＆ 中央32m×32mスクランブル交差点
     const roadCanvas = document.createElement('canvas');
@@ -1230,6 +1236,311 @@ function createDaylightAnimeColosseum() {
 
     spawnCityJumpPads(envGroup);
     scene.add(envGroup);
+}
+
+// ========================================================
+// Udemy 3D制作全工程：ランドスケープ・マテリアル・海・草・岩石・樹木
+// ========================================================
+function createUdemyLandscape(envGroup) {
+    // 1. ランドスケープ起伏地形 (360m × 360m, 96×96分割)
+    const geo = new THREE.PlaneGeometry(360, 360, 96, 96);
+    geo.rotateX(-Math.PI / 2);
+
+    const pos = geo.attributes.position;
+    for (let i = 0; i < pos.count; i++) {
+        const x = pos.getX(i);
+        const z = pos.getZ(i);
+        const r = Math.hypot(x, z);
+
+        let y = 0;
+        // 中央都市街区 (r < 44m) はフラットな渋谷の舗装アスファルト
+        if (r < 44.0) {
+            y = 0;
+        } else {
+            // 外周に向かって緩やかな丘陵と傾斜
+            const factor = (r - 44.0) / 70.0;
+            // うねる丘陵
+            const hill = Math.sin(x * 0.045) * Math.cos(z * 0.045) * 4.2 + Math.sin(x * 0.09 + z * 0.06) * 1.8;
+            y = Math.min(22.0, Math.pow(factor, 1.25) * 5.5 + hill * Math.min(1.0, factor));
+
+            // 北西・北東奥 (z < -45m): そびえ立つ山脈尾根 (Tokyo Towerを戴く山岳地帯)
+            if (z < -45.0 && Math.abs(x) > 20.0) {
+                const mountainRamp = Math.min(1.0, (-45.0 - z) / 45.0);
+                y += mountainRamp * (14.0 + Math.sin(x * 0.06) * 6.0);
+            }
+
+            // 南側 (z > 55m): 穏やかに海抜以下へ下る海岸線 (Udemy ウォータープラグインの海)
+            if (z > 50.0 && Math.abs(x) < 95.0) {
+                const coastDrop = (z - 50.0) / 45.0;
+                y = Math.max(-2.5, y - coastDrop * 8.5);
+            }
+        }
+        pos.setY(i, y);
+    }
+    geo.computeVertexNormals();
+
+    // 2. Quixel Bridge風 PBR複合テクスチャ (芝生・土・岩肌・砂浜のブレンド)
+    const terrCanvas = document.createElement('canvas');
+    terrCanvas.width = 1024;
+    terrCanvas.height = 1024;
+    const tctx = terrCanvas.getContext('2d');
+
+    // 下地：深緑の芝生
+    tctx.fillStyle = '#223826';
+    tctx.fillRect(0, 0, 1024, 1024);
+
+    // ノイズテクスチャ合成（土と岩肌）
+    for (let py = 0; py < 1024; py += 16) {
+        for (let px = 0; px < 1024; px += 16) {
+            const n = Math.sin(px * 0.04) * Math.cos(py * 0.04) + Math.random() * 0.3;
+            if (n > 0.4) {
+                tctx.fillStyle = 'rgba(74, 55, 40, 0.45)'; // 土
+                tctx.fillRect(px, py, 16, 16);
+            } else if (n < -0.3) {
+                tctx.fillStyle = 'rgba(40, 60, 48, 0.55)'; // 深緑草
+                tctx.fillRect(px, py, 16, 16);
+            }
+        }
+    }
+
+    // 南側海岸の砂浜グラデーション (下部)
+    const sandGrad = tctx.createLinearGradient(0, 780, 0, 1024);
+    sandGrad.addColorStop(0, 'rgba(194, 178, 128, 0.0)');
+    sandGrad.addColorStop(0.35, 'rgba(194, 178, 128, 0.7)');
+    sandGrad.addColorStop(1, 'rgba(212, 194, 142, 0.95)');
+    tctx.fillStyle = sandGrad;
+    tctx.fillRect(0, 780, 1024, 244);
+
+    const terrTex = new THREE.CanvasTexture(terrCanvas);
+    terrTex.wrapS = THREE.RepeatWrapping;
+    terrTex.wrapT = THREE.RepeatWrapping;
+    terrTex.repeat.set(4, 4);
+
+    const mat = new THREE.MeshStandardMaterial({
+        map: terrTex,
+        roughness: 0.72,
+        metalness: 0.12,
+        flatShading: false
+    });
+
+    landscapeTerrainMesh = new THREE.Mesh(geo, mat);
+    landscapeTerrainMesh.receiveShadow = true;
+    envGroup.add(landscapeTerrainMesh);
+}
+
+function createUdemyOceanWater(envGroup) {
+    // Udemy ウォータープラグイン相当：南側海岸の波打つオーシャン水面 (幅240m × 奥行き130m)
+    const waterGeo = new THREE.PlaneGeometry(240, 130, 48, 28);
+    waterGeo.rotateX(-Math.PI / 2);
+
+    const waterMat = new THREE.MeshStandardMaterial({
+        color: 0x00a8ff,
+        roughness: 0.08,
+        metalness: 0.85,
+        transparent: true,
+        opacity: 0.82,
+        envMapIntensity: 2.2
+    });
+
+    oceanWaterMesh = new THREE.Mesh(waterGeo, waterMat);
+    oceanWaterMesh.position.set(0, -0.65, 120.0);
+    oceanWaterMesh.receiveShadow = true;
+    envGroup.add(oceanWaterMesh);
+
+    // 砂浜と水面の境界に広がる白い波打ち際（海岸フォーム）
+    const foamGeo = new THREE.PlaneGeometry(210, 4.5);
+    foamGeo.rotateX(-Math.PI / 2);
+    const foamMat = new THREE.MeshBasicMaterial({
+        color: 0xffffff,
+        transparent: true,
+        opacity: 0.65
+    });
+    const foamMesh = new THREE.Mesh(foamGeo, foamMat);
+    foamMesh.position.set(0, -0.48, 55.5);
+    envGroup.add(foamMesh);
+}
+
+function createUdemyInstancedGrass(envGroup) {
+    // Udemy 環境構築：風に揺れるリアルな草のインスタンス配置 (1,800本)
+    const grassCount = 1800;
+    // 2枚の交差した草のブレード
+    const bladeGeo = new THREE.BufferGeometry();
+    const w = 0.22, h = 0.95;
+    const positions = new Float32Array([
+        // Blade 1
+        -w, 0, 0,   w, 0, 0,   0, h, 0,
+        // Blade 2 (cross 90 deg)
+        0, 0, -w,   0, 0, w,   0, h, 0
+    ]);
+    bladeGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    bladeGeo.computeVertexNormals();
+
+    const grassMat = new THREE.MeshStandardMaterial({
+        color: 0x2ecc71,
+        roughness: 0.6,
+        metalness: 0.05,
+        side: THREE.DoubleSide
+    });
+
+    instancedGrassMesh = new THREE.InstancedMesh(bladeGeo, grassMat, grassCount);
+    grassInitialTransforms = [];
+
+    const dummy = new THREE.Object3D();
+    let placed = 0;
+    while (placed < grassCount) {
+        const rad = 46.0 + Math.random() * 46.0; // 46m〜92mの丘陵地帯
+        const angle = Math.random() * Math.PI * 2;
+        const gx = Math.cos(angle) * rad;
+        const gz = Math.sin(angle) * rad;
+
+        // 海（南側 z > 55m）には草を生やさない
+        if (gz > 52.0) continue;
+
+        // 丘の高さを計算
+        const factor = (rad - 44.0) / 70.0;
+        const hill = Math.sin(gx * 0.045) * Math.cos(gz * 0.045) * 4.2;
+        const gy = Math.max(0, Math.pow(factor, 1.25) * 5.5 + hill * factor);
+
+        dummy.position.set(gx, gy, gz);
+        dummy.rotation.set(
+            (Math.random() - 0.5) * 0.15,
+            Math.random() * Math.PI * 2,
+            (Math.random() - 0.5) * 0.15
+        );
+        const s = 0.8 + Math.random() * 0.6;
+        dummy.scale.set(s, s * (0.9 + Math.random() * 0.4), s);
+        dummy.updateMatrix();
+
+        instancedGrassMesh.setMatrixAt(placed, dummy.matrix);
+        grassInitialTransforms.push({
+            pos: dummy.position.clone(),
+            rot: dummy.rotation.clone(),
+            scale: dummy.scale.clone(),
+            phase: Math.random() * Math.PI * 2
+        });
+        placed++;
+    }
+
+    instancedGrassMesh.instanceMatrix.needsUpdate = true;
+    instancedGrassMesh.receiveShadow = true;
+    envGroup.add(instancedGrassMesh);
+}
+
+function createUdemyRocksAndTrees(envGroup) {
+    // Udemy Quixel Bridge アセット配置：岩石群 (Boulders) ＆ 樹木 (Trees)
+    // 1. 岩石群 (24基)
+    const rockGeo = new THREE.DodecahedronGeometry(1.6, 1);
+    const rockMat = new THREE.MeshStandardMaterial({
+        color: 0x5a6268,
+        roughness: 0.88,
+        metalness: 0.18,
+        flatShading: true
+    });
+
+    for (let i = 0; i < 24; i++) {
+        const rad = 48.0 + Math.random() * 45.0;
+        const angle = (i / 24) * Math.PI * 2 + (Math.random() - 0.5) * 0.3;
+        const rx = Math.cos(angle) * rad;
+        const rz = Math.sin(angle) * rad;
+
+        let ry = 0.5;
+        if (rz > 52.0) {
+            ry = -0.3; // 砂浜の岩
+        } else {
+            const factor = (rad - 44.0) / 70.0;
+            ry = Math.pow(factor, 1.25) * 5.5;
+        }
+
+        const rockMesh = new THREE.Mesh(rockGeo, rockMat);
+        const s = 0.7 + Math.random() * 1.5;
+        rockMesh.scale.set(s * (0.8 + Math.random() * 0.4), s * (0.6 + Math.random() * 0.5), s * (0.8 + Math.random() * 0.4));
+        rockMesh.rotation.set(Math.random() * Math.PI, Math.random() * Math.PI, Math.random() * Math.PI);
+        rockMesh.position.set(rx, ry + s * 0.5, rz);
+        rockMesh.castShadow = true;
+        rockMesh.receiveShadow = true;
+        envGroup.add(rockMesh);
+    }
+
+    // 2. 丘陵の自然樹木 (36本)
+    const trunkMat = new THREE.MeshStandardMaterial({ color: 0x4a3728, roughness: 0.9 });
+    const leafColors = [0x27ae60, 0x2ecc71, 0x1abc9c, 0xf39c12, 0xe74c3c]; // 新緑・濃緑・紅葉
+
+    for (let i = 0; i < 36; i++) {
+        const rad = 46.0 + Math.random() * 42.0;
+        const angle = (i / 36) * Math.PI * 2 + (Math.random() - 0.5) * 0.25;
+        const tx = Math.cos(angle) * rad;
+        const tz = Math.sin(angle) * rad;
+
+        if (tz > 52.0) continue; // 海上には生やさない
+
+        const factor = (rad - 44.0) / 70.0;
+        const ty = Math.pow(factor, 1.25) * 5.5;
+
+        const treeGroup = new THREE.Group();
+        treeGroup.position.set(tx, ty, tz);
+
+        const treeTrunk = new THREE.Mesh(
+            new THREE.CylinderGeometry(0.35, 0.55, 3.8, 8),
+            trunkMat
+        );
+        treeTrunk.position.y = 1.9;
+        treeTrunk.castShadow = true;
+        treeGroup.add(treeTrunk);
+
+        const canopyColor = leafColors[i % leafColors.length];
+        const canopyMat = new THREE.MeshStandardMaterial({
+            color: canopyColor,
+            roughness: 0.75,
+            metalness: 0.05,
+            flatShading: true
+        });
+
+        // 2段キャノピー
+        const lowerCanopy = new THREE.Mesh(new THREE.ConeGeometry(2.4, 3.2, 8), canopyMat);
+        lowerCanopy.position.y = 4.2;
+        lowerCanopy.castShadow = true;
+        treeGroup.add(lowerCanopy);
+
+        const upperCanopy = new THREE.Mesh(new THREE.ConeGeometry(1.8, 2.6, 8), canopyMat);
+        upperCanopy.position.y = 5.8;
+        upperCanopy.castShadow = true;
+        treeGroup.add(upperCanopy);
+
+        envGroup.add(treeGroup);
+    }
+}
+
+function updateLandscapeEnvironment(dt) {
+    // 1. 海面の動的波アニメーション (Udemy ウォータープラグイン)
+    if (oceanWaterMesh) {
+        const pos = oceanWaterMesh.geometry.attributes.position;
+        const time = elapsedTime * 2.2;
+        for (let i = 0; i < pos.count; i++) {
+            const x = pos.getX(i);
+            const z = pos.getZ(i);
+            const wave = Math.sin(time + x * 0.08 + z * 0.05) * 0.22 + Math.cos(time * 1.4 + x * 0.12) * 0.12;
+            pos.setY(i, wave);
+        }
+        pos.needsUpdate = true;
+        oceanWaterMesh.geometry.computeVertexNormals();
+    }
+
+    // 2. 風に揺れる草のアニメーション (Udemy インスタンス草)
+    if (instancedGrassMesh && grassInitialTransforms.length) {
+        const dummy = new THREE.Object3D();
+        const windTime = elapsedTime * 3.2;
+        const sampleStep = 4; // パフォーマンスのため4つ飛ばしで分散更新
+        for (let i = 0; i < grassInitialTransforms.length; i += sampleStep) {
+            const tr = grassInitialTransforms[i];
+            dummy.position.copy(tr.pos);
+            dummy.scale.copy(tr.scale);
+            const windAngle = Math.sin(windTime + tr.phase) * 0.18;
+            dummy.rotation.set(tr.rot.x + windAngle, tr.rot.y, tr.rot.z + windAngle * 0.5);
+            dummy.updateMatrix();
+            instancedGrassMesh.setMatrixAt(i, dummy.matrix);
+        }
+        instancedGrassMesh.instanceMatrix.needsUpdate = true;
+    }
 }
 
 /**
@@ -5484,6 +5795,9 @@ function animate() {
     // 109 大型街頭LEDビジョン リアルタイム中継 ＆ 地下鉄通気口ジャンプパッド更新
     update109Billboard(dt);
     updateCityJumpPads(dt);
+
+    // Udemy 3D環境 (海面波＆風揺れ草) 更新
+    updateLandscapeEnvironment(dt);
 
     // エフェクト更新
     for (let i = effectsList.length - 1; i >= 0; i--) {
